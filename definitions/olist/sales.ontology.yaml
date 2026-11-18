@@ -1,0 +1,174 @@
+# Olist(브라질 이커머스 공개 데이터) 주문·매출 영역 온톨로지 샘플
+# 형식: Apache Ossie 0.3.0.dev0 온톨로지 문서, apache/ossie 커밋 da73e0e (2026-11-15) 기준
+# 검증: uv run --with <ossie 클론>/python --script <ossie 클론>/validation/validate.py --schema <ossie 클론>/ontology/ontology.json definitions/olist/sales.ontology.yaml
+#
+# 이 파일은 업무 개념과 그 사이의 관계만 적는다. 테이블·컬럼과의 연결은 sales.mapping.yaml 이 맡는다.
+# 지표(매출, 주문 수, 배송비, 평균 배송일수)는 여기서 다시 정의하지 않는다. 지표의 정본은 sales.ossie.yaml 이다(derived_by 도 쓰지 않는다).
+# 고객은 둘로 나눈다. Customer 는 실제 사람(customer_unique_id), CustomerAccount 는 주문마다 새로 발급되는 고객 ID(customer_id)다.
+
+version: 0.3.0.dev0
+name: olist_sales_ontology
+description: 브라질 이커머스 Olist 주문·매출 영역의 개념과 관계
+ontology:
+- concept: AmountBRL
+  description: 브라질 헤알(BRL) 금액
+  type: ValueType
+  extends: [ Decimal ]
+  requires: [ AmountBRL >= 0 ]
+- concept: OrderStatus
+  description: 주문 상태 코드
+  type: ValueType
+  extends: [ String ]
+  requires: [ "OrderStatus == 'delivered' OR OrderStatus == 'shipped' OR OrderStatus == 'invoiced' OR OrderStatus == 'processing' OR OrderStatus == 'approved' OR OrderStatus == 'created' OR OrderStatus == 'canceled' OR OrderStatus == 'unavailable'" ]
+- concept: StateCode
+  description: 브라질 주 두 글자 코드(SP, RJ 등)
+  type: ValueType
+  extends: [ String ]
+- concept: CategoryName
+  description: 상품 카테고리 이름(포르투갈어)
+  type: ValueType
+  extends: [ String ]
+- concept: CustomerUniqueId
+  description: 실제 고객(사람)을 식별하는 ID
+  type: ValueType
+  extends: [ String ]
+- concept: CustomerAccountId
+  description: 주문마다 새로 발급되는 고객 ID. 같은 사람이라도 주문마다 다르다
+  type: ValueType
+  extends: [ String ]
+- concept: OrderId
+  type: ValueType
+  extends: [ String ]
+- concept: ProductId
+  type: ValueType
+  extends: [ String ]
+- concept: ItemSeqNr
+  description: 주문 안에서의 상품 순번(1부터)
+  type: ValueType
+  extends: [ Integer ]
+  requires: [ ItemSeqNr >= 1 ]
+- concept: State
+  description: 브라질 주
+  type: EntityType
+  identify_by: [ code ]
+  relationships:
+  - name: code
+    roles:
+    - concept: StateCode
+    verbalizes: [ '{State} is identified by {StateCode}' ]
+    multiplicity: OneToOne
+- concept: Customer
+  description: 실제 고객(사람). 고객 수와 재구매는 이 개념으로 센다
+  type: EntityType
+  identify_by: [ unique_id ]
+  relationships:
+  - name: unique_id
+    roles:
+    - concept: CustomerUniqueId
+    verbalizes: [ '{Customer} is identified by {CustomerUniqueId}' ]
+    multiplicity: OneToOne
+- concept: CustomerAccount
+  description: 주문 1건에 딸린 고객 계정. 주문마다 새로 생기며 한 사람(Customer)이 여러 계정을 가질 수 있다
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles:
+    - concept: CustomerAccountId
+    verbalizes: [ '{CustomerAccount} is identified by {CustomerAccountId}' ]
+    multiplicity: OneToOne
+  - name: customer
+    roles:
+    - concept: Customer
+    verbalizes: [ '{CustomerAccount} belongs to {Customer}' ]
+    multiplicity: ManyToOne
+  - name: state
+    roles:
+    - concept: State
+    verbalizes: [ '{CustomerAccount} lives in {State}' ]
+    multiplicity: ManyToOne
+- concept: ProductCategory
+  description: 상품 카테고리
+  type: EntityType
+  identify_by: [ name ]
+  relationships:
+  - name: name
+    roles:
+    - concept: CategoryName
+    verbalizes: [ '{ProductCategory} is identified by {CategoryName}' ]
+    multiplicity: OneToOne
+- concept: Product
+  description: 판매 상품
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles:
+    - concept: ProductId
+    verbalizes: [ '{Product} is identified by {ProductId}' ]
+    multiplicity: OneToOne
+  - name: category
+    roles:
+    - concept: ProductCategory
+    verbalizes: [ '{Product} belongs to {ProductCategory}' ]
+    multiplicity: ManyToOne
+- concept: Order
+  description: 주문 1건
+  type: EntityType
+  identify_by: [ id ]
+  relationships:
+  - name: id
+    roles:
+    - concept: OrderId
+    verbalizes: [ '{Order} is identified by {OrderId}' ]
+    multiplicity: OneToOne
+  - name: placed_by
+    roles:
+    - concept: CustomerAccount
+    verbalizes: [ '{Order} is placed by {CustomerAccount}' ]
+    multiplicity: OneToOne    # 고객 계정은 주문마다 새로 발급되므로 계정 하나에 주문은 하나다
+  - name: status
+    roles:
+    - concept: OrderStatus
+    verbalizes: [ '{Order} has {OrderStatus}' ]
+    multiplicity: ManyToOne
+  - name: purchased_at
+    roles:
+    - concept: DateTime
+    verbalizes: [ '{Order} is purchased at {DateTime}' ]
+    multiplicity: ManyToOne
+  - name: delivered_at
+    roles:
+    - concept: DateTime
+    verbalizes: [ '{Order} is delivered to the customer at {DateTime}' ]
+    multiplicity: ManyToOne
+- concept: OrderItem
+  description: 주문 안의 상품 1개. 주문과 순번으로 식별한다
+  type: EntityType
+  identify_by: [ order, seq_nr ]
+  relationships:
+  - name: order
+    roles:
+    - concept: Order
+    verbalizes: [ '{OrderItem} belongs to {Order}' ]
+    multiplicity: ManyToOne
+  - name: seq_nr
+    roles:
+    - concept: ItemSeqNr
+    verbalizes: [ '{OrderItem} has {ItemSeqNr}' ]
+    multiplicity: ManyToOne
+  - name: product
+    roles:
+    - concept: Product
+    verbalizes: [ '{OrderItem} contains {Product}' ]
+    multiplicity: ManyToOne
+  - name: price
+    roles:
+    - concept: AmountBRL
+    verbalizes: [ '{OrderItem} has price- {AmountBRL}' ]    # 배송비는 들어 있지 않다
+    multiplicity: ManyToOne
+  - name: freight
+    roles:
+    - concept: AmountBRL
+    verbalizes: [ '{OrderItem} has freight- {AmountBRL}' ]
+    multiplicity: ManyToOne

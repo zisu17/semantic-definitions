@@ -1,0 +1,1314 @@
+# Olist(브라질 이커머스 공개 데이터) 주문·매출 지표 정의 샘플
+# 형식: Apache Ossie 0.3.0.dev0, apache/ossie 커밋 da73e0e (2026-11-15) 기준
+# 검증: uv run --with <ossie 클론>/python --script <ossie 클론>/validation/validate.py definitions/olist/sales.ossie.yaml
+#
+# 배치 규칙(우리 규칙, Ossie 스펙 아님): definitions/<DB>/<주제>.ossie.yaml
+#   폴더 = DB(접속) 하나. 파일 = 그 DB 안의 주제 영역 하나 = Ossie 시맨틱 모델 하나
+#   Ossie 는 파일끼리 참조가 안 되므로, 조인하거나 함께 계산하는 테이블은 같은 파일에 둔다
+#
+# 지표 SQL은 엔진(text2sql/engine.py)이 이 파일의 식과 연결로 만든다. LLM은 설명·동의어를 보고 지표를 고른다.
+# 지표는 모두 데이터셋 지표다. 표 여러 개가 필요한 지표는 source 에 조회문을 둔 계산용 표(order_lines, review_lines)에 둔다.
+#   Ossie 규격은 source 에 테이블·뷰 이름이나 쿼리를 둘 수 있다. t2s 는 SELECT 문 하나이고 이 파일의 다른 데이터셋이 가리키는 테이블만 읽는 조회문을 받는다
+# Ossie에 전용 칸이 없는 것은 이렇게 적는다.
+#   필터 조건: 지표 식 안에 FILTER (WHERE ...) 또는 CASE
+#   시간 기준: ai_context.instructions 에 문장으로
+#   승인 여부: nonportable_extensions(vendor_name: TEXT2SQL)의 data.status. approved 인 지표와 연결만 쓴다
+#   정의 번호: 모델의 nonportable_extensions(TEXT2SQL)의 data.revision. CI 가 매기기 전까지 정의 에이전트가 저장할 때 1 올린다
+# 확장 칸(nonportable_extensions)의 data 는 JSON 문자열이 아니라 YAML 객체로 적는다. 날짜 값은 따옴표로 감싸 문자열로 둔다(날짜 객체는 규격 오류).
+# 날짜 차이는 규격대로 DATEDIFF(day, 시작, 끝)처럼 단위를 따옴표 없이 쓴다.
+# source 의 테이블 이름은 실제로 적재한 DB에 맞춰 바꾼다. 이 샘플은 SQLite 테스트 데이터 기준이라 스키마 없이 적었다(PostgreSQL이면 olist.orders 처럼).
+# 이 머리말 주석은 정의 에이전트가 저장해도 남는다. 본문 안의 주석은 저장할 때 사라진다.
+
+version: 0.3.0.dev0
+name: olist_sales
+description: 브라질 이커머스 Olist 주문·매출
+ai_context:
+  instructions: >-
+    데이터는 2016-09-04 ~ 2018-10-17 주문만 있다. 금액 단위는 브라질 헤알(BRL)이다.
+nonportable_extensions:
+  - vendor_name: TEXT2SQL
+    data:
+      revision: 7
+      decisions:
+      - id: category_quality_improvement
+        decider: 카테고리 담당자
+        decision: 품질 개선이 필요한 카테고리를 고른다
+        action: 개선 요청·원인 분석
+        grain:
+        - customers.customer_state
+        - products.product_category_name
+        baseline: 지금은 보지 않음
+      - id: eval_accuracy_comparison
+        decider: 평가 담당자
+        decision: 지표 정의를 넣으면 평가셋 정답률이 오르는지 판단한다
+        action: 평가셋 정답과 다르면 지표 정의를 고쳐 다시 잰다
+        grain:
+        - customers.customer_city
+        - customers.customer_state
+        - order_payments.payment_type
+        - order_reviews.review_creation_date__day
+        - order_reviews.review_score
+        - orders.order_purchase_timestamp__month
+        - orders.order_purchase_timestamp__year
+        - orders.order_status
+        - product_category_name_translation.product_category_name_english
+        - products.product_category_name
+        - sellers.seller_state
+        baseline: 사람이 문항마다 정답 SQL 을 짜고 따로 검산한다
+
+datasets:
+  - name: orders
+    source: orders
+    primary_key: [order_id]
+    description: 주문 1건이 1행
+    fields:
+      - name: order_id
+        expression: {sql: order_id}
+        datatype: String
+      - name: customer_id
+        expression: {sql: customer_id}
+        datatype: String
+        description: 주문마다 새로 발급되는 고객 ID. 같은 사람을 묶으려면 customers.customer_unique_id 를 쓴다
+      - name: order_status
+        expression: {sql: order_status}
+        datatype: String
+        description: 주문 상태
+        ai_context:
+          instructions: >-
+            값은 delivered(배송 완료), shipped(배송 중), invoiced(청구됨), processing(처리 중),
+            approved(결제 승인), created(생성됨), canceled(취소), unavailable(재고 없음)
+      - name: order_purchase_timestamp
+        expression: {sql: order_purchase_timestamp}
+        datatype: DateTime
+        description: 주문일시. 기간을 묻는 질문의 기본 기준 날짜
+        ai_context:
+          synonyms: [주문일, 구매일]
+      - name: order_delivered_customer_date
+        expression: {sql: order_delivered_customer_date}
+        datatype: DateTime
+        description: 고객 수령일시. 배송이 끝나지 않았으면 NULL
+        ai_context:
+          synonyms: [배송완료일, 수령일]
+      - name: order_approved_at
+        expression: {sql: order_approved_at}
+        datatype: DateTime
+        description: 결제 승인일시
+      - name: order_delivered_carrier_date
+        expression: {sql: order_delivered_carrier_date}
+        datatype: DateTime
+        description: 물류사 인계일시
+      - name: order_estimated_delivery_date
+        expression: {sql: order_estimated_delivery_date}
+        datatype: DateTime
+        description: 주문 때 고객에게 안내한 예상 배송일
+    metrics:
+      - name: order_count
+        expression:
+          sql: COUNT(order_id) FILTER (WHERE order_status NOT IN ('canceled', 'unavailable'))
+        description: 주문 수. 취소와 재고 없음 주문은 뺀다
+        datatype: Integer
+        ai_context:
+          synonyms: [주문 수, 주문 건수]
+          instructions: 기간은 order_purchase_timestamp(주문일) 기준으로 자른다. 일, 주, 월 단위로 볼 수 있다
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+      - name: avg_delivery_days
+        expression:
+          sql: AVG(DATEDIFF(day, order_purchase_timestamp, order_delivered_customer_date)) FILTER (WHERE order_status = 'delivered')
+        description: 평균 배송일수. 주문일부터 고객 수령일까지 달력 기준 일수
+        datatype: Decimal
+        ai_context:
+          synonyms: [배송 소요일, 달력 기준 배송 일수]
+          instructions: 기간은 주문일 기준. 시작 시점을 주문일로 볼지 결제 승인일로 볼지 아직 정하지 않았다
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: draft
+      - name: all_order_count
+        expression:
+          sql: COUNT(order_id)
+        description: 전체 주문 수. 취소와 재고 없음을 포함해 모든 주문 상태의 주문을 센다
+        datatype: Integer
+        ai_context:
+          synonyms: [전체 주문 수, 모든 주문 수, 들어온 주문 수, 상태별 주문 수]
+          instructions: >-
+            주문 상태(order_status)별, 주문 월별로 본다.
+            주문 한 건을 한 번 센다. 주문 상태로 거르지 않는다(취소·재고 없음 포함).
+            질문이 상태를 정하면 order_status 조건을 붙인다.
+            기간은 order_purchase_timestamp(주문일) 기준으로 자른다.
+            order_count 지표는 취소와 재고 없음을 빼므로 값이 다르다
+          examples: [2017년에 들어온 주문의 주문 상태별 건수, 2018년 8월에 들어온 주문 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 1건
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 빼지 않는다. 취소·재고 없음도 센다(bird-001, bird-006 은 모든 상태)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 주문 상태별(bird-001), 기간 전체 합(bird-006)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 비슷한 지표와 따로 두는 이유
+                a: order_count 는 취소·재고 없음을 빼서 상태별 건수를 낼 수 없다
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 6512
+                tolerance: 1.0e-06
+                where:
+                - orders.order_purchase_timestamp >= '2018-08-01'
+                - orders.order_purchase_timestamp < '2018-09-01'
+                source: 평가셋 v0.3 bird-006 정답
+      - name: avg_delivery_days_exact
+        expression:
+          sql: AVG(CASE WHEN order_status <> 'delivered' THEN NULL ELSE DATEDIFF(second, order_purchase_timestamp, order_delivered_customer_date) / 86400.0 END)
+        description: 평균 배송 일수. 배송 완료 주문의 구매 시각부터 고객 도착 시각까지 걸린 시간을 일 단위(소수 포함)로 평균 낸다
+        datatype: Decimal
+        ai_context:
+          synonyms: [평균 배송 일수, 배송 기간, 배송이 걸린 기간]
+          instructions: >-
+            고객 주(customers.customer_state)별로 본다.
+            배송 완료(delivered) 주문만 넣고, 도착 시각이 빈 주문은 뺀다.
+            배송 일수는 도착 시각 − 구매 시각을 시·분·초까지 반영한 일 단위 실수다. 달력 날짜끼리 뺀 정수 일수가 아니다.
+            기간은 order_purchase_timestamp(주문일) 기준으로 자른다.
+            avg_delivery_days 지표는 달력 날짜 차이라 값이 다르다
+          examples: [2017년 배송 완료 주문 기준 평균 배송 일수가 가장 긴 고객 주 5곳]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 1건
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: delivered 가 아닌 주문, 도착 시각이 빈 주문(bird-007)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 일수 계산
+                a: 도착 시각 − 구매 시각, 일 단위 소수 포함
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 고객 주별(bird-007)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 비슷한 지표와 따로 두는 이유
+                a: avg_delivery_days 는 달력 날짜 차이(정수)라 bird-007 의 소수 일수와 다르다
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 32.1
+                tolerance: 0.0002
+                where:
+                - customers.customer_state = 'RR'
+                - orders.order_purchase_timestamp >= '2017-01-01'
+                - orders.order_purchase_timestamp < '2018-01-01'
+                source: 평가셋 v0.3 bird-007 정답(RR, 소수 둘째 자리 반올림)
+      - name: delivery_judged_order_count
+        expression:
+          sql: >-
+            COUNT(CASE
+              WHEN order_status <> 'delivered' THEN NULL
+              WHEN order_delivered_customer_date IS NULL THEN NULL
+              WHEN order_estimated_delivery_date IS NULL THEN NULL
+              ELSE order_id
+            END)
+        description: 지연 판정 대상 주문 수. 배송 완료 주문 중 실제 도착일과 예상 도착일이 모두 있는 주문을 센다
+        datatype: Integer
+        ai_context:
+          synonyms: [지연 판정 대상 주문 수, 배송 지연 대상 주문 수, 대상 주문 수, 도착일이 기록된 배송 완료 주문 수]
+          instructions: >-
+            주문 연도·기간으로 잘라 본다.
+            배송 완료(delivered)이면서 실제 도착일과 예상 도착일이 모두 있는 주문을 한 번씩 센다. 배송 지연 비율(late_delivery_rate)의 분모다.
+            기간은 order_purchase_timestamp(주문일) 기준으로 자른다
+          examples: [2017년 구매한 배송 완료 주문 중 도착일이 모두 기록된 주문 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 1건
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: delivered 가 아닌 주문, 실제 도착일이나 예상 도착일이 빈 주문(bang-002)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 43426
+                tolerance: 1.0e-06
+                where:
+                - orders.order_purchase_timestamp >= '2017-01-01'
+                - orders.order_purchase_timestamp < '2018-01-01'
+                source: 평가셋 v0.3 bang-002 정답
+      - name: late_delivery_rate
+        expression:
+          sql: >-
+            AVG(CASE
+              WHEN order_status <> 'delivered' THEN NULL
+              WHEN order_delivered_customer_date IS NULL THEN NULL
+              WHEN order_estimated_delivery_date IS NULL THEN NULL
+              WHEN DATEDIFF(day, order_estimated_delivery_date, order_delivered_customer_date) > 0 THEN 100.0
+              ELSE 0.0
+            END)
+        description: 배송 지연 비율(%). 배송 완료 주문 중 실제 도착 날짜가 예상 도착 날짜보다 뒤인 주문의 비율이고 0~100 단위다
+        datatype: Decimal
+        ai_context:
+          synonyms: [배송 지연 비율, 지연 배송 비율, 지연율, 늦게 도착한 비율]
+          instructions: >-
+            주문 연도·기간으로 잘라 본다.
+            대상(분모)은 배송 완료(delivered)이면서 실제 도착일과 예상 도착일이 모두 있는 주문이다. 도착일이 빈 주문은 판단할 수 없어 뺀다.
+            지연은 날짜만 비교해 실제 도착 날짜가 예상 도착 날짜보다 뒤인 경우다. 예상일 당일 도착은 지연이 아니다.
+            예상 도착일은 모두 0시라 시각까지 비교하면 당일 도착이 지연으로 잘못 잡힌다.
+            값은 0~100 단위 퍼센트다.
+            기간은 order_purchase_timestamp(주문일) 기준으로 자른다
+          examples: [2017년 구매한 배송 완료 주문의 배송 지연 비율]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 1건
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: delivered 가 아닌 주문, 실제 도착일이나 예상 도착일이 빈 주문(bang-002)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 지연 판정
+                a: date(실제 도착일) > date(예상 도착일). 예상일 당일 도착은 지연이 아니다
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 값의 단위
+                a: 0~100 퍼센트
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 5.6487
+                tolerance: 1.0e-05
+                where:
+                - orders.order_purchase_timestamp >= '2017-01-01'
+                - orders.order_purchase_timestamp < '2018-01-01'
+                source: 평가셋 v0.3 bang-002 정답(43,426건 중 2,453건)
+      - name: late_order_count
+        expression:
+          sql: >-
+            COUNT(CASE
+              WHEN order_status <> 'delivered' THEN NULL
+              WHEN order_delivered_customer_date IS NULL THEN NULL
+              WHEN order_estimated_delivery_date IS NULL THEN NULL
+              WHEN DATEDIFF(day, order_estimated_delivery_date, order_delivered_customer_date) > 0 THEN order_id
+            END)
+        description: 지연 주문 수. 배송 완료 주문 중 실제 도착 날짜가 예상 도착 날짜보다 뒤인 주문을 센다
+        datatype: Integer
+        ai_context:
+          synonyms: [지연 주문 수, 배송 지연 주문 수, 늦게 도착한 주문 수]
+          instructions: >-
+            주문 연도·기간으로 잘라 본다.
+            배송 완료(delivered)이면서 실제 도착일과 예상 도착일이 모두 있는 주문 중, 날짜만 비교해 실제 도착 날짜가 예상 날짜보다 뒤인 주문을 센다. 예상일 당일 도착은 지연이 아니다. 예상 도착일은 모두 0시라 시각까지 비교하면 당일 도착이 지연으로 잘못 잡힌다. 배송 지연 비율(late_delivery_rate)의 분자다.
+            기간은 order_purchase_timestamp(주문일) 기준으로 자른다
+          examples: [2017년 구매한 배송 완료 주문 중 예상 도착일보다 늦게 도착한 주문 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 1건
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: delivered 가 아닌 주문, 실제 도착일이나 예상 도착일이 빈 주문(bang-002)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 지연 판정
+                a: date(실제 도착일) > date(예상 도착일). 예상일 당일 도착은 지연이 아니다
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 2453
+                tolerance: 1.0e-06
+                where:
+                - orders.order_purchase_timestamp >= '2017-01-01'
+                - orders.order_purchase_timestamp < '2018-01-01'
+                source: 평가셋 v0.3 bang-002 정답
+
+  - name: order_items
+    source: order_items
+    primary_key: [order_id, order_item_id]
+    description: 주문 안의 상품 1개가 1행. 주문 1건에 여러 행이 있을 수 있다
+    fields:
+      - name: order_id
+        expression: {sql: order_id}
+        datatype: String
+      - name: order_item_id
+        expression: {sql: order_item_id}
+        datatype: Integer
+        description: 주문 안에서의 상품 순번(1부터)
+      - name: product_id
+        expression: {sql: product_id}
+        datatype: String
+      - name: seller_id
+        expression: {sql: seller_id}
+        datatype: String
+      - name: shipping_limit_date
+        expression: {sql: shipping_limit_date}
+        datatype: DateTime
+        description: 판매자가 물류사에 넘겨야 하는 기한
+      - name: price
+        expression: {sql: price}
+        datatype: Decimal
+        description: 상품 가격. 배송비는 들어 있지 않다
+      - name: freight_value
+        expression: {sql: freight_value}
+        datatype: Decimal
+        description: 배송비
+    metrics:
+      - name: item_count
+        expression:
+          sql: COUNT(*)
+        description: 주문 상품 줄 수. 주문 상품 표 한 행을 한 개로 센다. 같은 상품을 여러 개 사면 행마다 센다. 주문 상태는 기본으로 거르지 않는다
+        datatype: Integer
+        ai_context:
+          synonyms: [주문 상품 줄 수, 상품 줄 수, 판매 상품 수, 판매량, 주문 상품 수, 상품 개수]
+          instructions: >-
+            주문 월(orders.order_purchase_timestamp__month)별, 판매자 주(sellers.seller_state)별, 상품 카테고리별로 본다.
+            주문 상품 한 행을 한 번 센다. 주문 수도, 서로 다른 상품 수도, 등록 상품 수도 아니다.
+            주문 상태는 기본으로 거르지 않는다. 질문이 정하면 orders.order_status 조건을 붙인다.
+            카테고리가 빈 상품은 products.product_category_name IS NULL, 영문 번역이 없는 상품은 product_category_name_english IS NULL 로 고른다.
+            기간은 orders.order_purchase_timestamp(주문일) 기준으로 자른다
+          examples: [2018년 1분기 배송 완료 주문의 월별 상품 줄 수, 2018년 배송 완료 주문의 판매자 주별 상품 줄 수, 카테고리 영문명이 없는 상품의 연도별 상품 줄 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 상품 1행(order_items)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 기본으로 빼지 않는다(모든 상태). 상태는 질문 조건으로 붙인다
+                by: 지표 요청자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 주문 월별(hard-011), 판매자 주별(hard-012), 카테고리·연도별(hard-019)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 875
+                tolerance: 1.0e-06
+                where:
+                - products.product_category_name IS NULL
+                - orders.order_status = 'delivered'
+                - orders.order_purchase_timestamp >= '2017-01-01'
+                - orders.order_purchase_timestamp < '2018-01-01'
+                source: 평가셋 v0.3 hard-019 정답(카테고리 빈 상품, 2017년)
+
+  - name: customers
+    source: customers
+    primary_key: [customer_id]
+    fields:
+      - name: customer_id
+        expression: {sql: customer_id}
+        datatype: String
+      - name: customer_unique_id
+        expression: {sql: customer_unique_id}
+        datatype: String
+        description: 실제 고객(사람) 단위 ID. 고객 수와 재구매는 이 값으로 센다
+      - name: customer_state
+        expression: {sql: customer_state}
+        datatype: String
+        description: 고객이 사는 주. 두 글자 코드(SP, RJ 등)
+        ai_context:
+          synonyms: [지역, 주]
+      - name: customer_city
+        expression: {sql: customer_city}
+        datatype: String
+        description: 고객이 사는 도시
+      - name: customer_zip_code_prefix
+        expression: {sql: customer_zip_code_prefix}
+        datatype: Integer
+        description: 우편번호 앞 5자리. 공식 스키마에서 geolocation 과 잇는 값이지만 이 DB 에는 geolocation 이 없다
+
+  - name: products
+    source: products
+    primary_key: [product_id]
+    fields:
+      - name: product_id
+        expression: {sql: product_id}
+        datatype: String
+      - name: product_category_name
+        expression: {sql: product_category_name}
+        datatype: String
+        description: 상품 카테고리 이름(포르투갈어). 영어 이름은 product_category_name_translation 에 있다
+        ai_context:
+          synonyms: [카테고리, 상품 분류]
+      - name: product_name_lenght
+        expression: {sql: product_name_lenght}
+        datatype: Decimal
+        description: 상품명 글자 수. 이름의 lenght 는 원본 컬럼 철자 그대로다
+      - name: product_description_lenght
+        expression: {sql: product_description_lenght}
+        datatype: Decimal
+        description: 상품 설명 글자 수
+      - name: product_photos_qty
+        expression: {sql: product_photos_qty}
+        datatype: Decimal
+        description: 상품 사진 수
+      - name: product_weight_g
+        expression: {sql: product_weight_g}
+        datatype: Decimal
+        description: 상품 무게(g)
+      - name: product_length_cm
+        expression: {sql: product_length_cm}
+        datatype: Decimal
+        description: 상품 길이(cm)
+      - name: product_height_cm
+        expression: {sql: product_height_cm}
+        datatype: Decimal
+        description: 상품 높이(cm)
+      - name: product_width_cm
+        expression: {sql: product_width_cm}
+        datatype: Decimal
+        description: 상품 너비(cm)
+    metrics:
+      - name: product_count
+        expression:
+          sql: COUNT(product_id)
+        description: 등록 상품 수. 상품 표에 등록된 상품을 하나씩 센다. 판매 여부는 따지지 않는다
+        datatype: Integer
+        ai_context:
+          synonyms: [상품 수, 등록 상품 수, 등록된 상품 수]
+          instructions: >-
+            카테고리 영문명(product_category_name_translation.product_category_name_english)별로 본다.
+            상품 한 개(product_id)를 한 번 센다. 주문 상품 줄 수가 아니다.
+            주문 기간·상태 조건을 붙이면 등록 상품 전체가 아니라 그 조건의 주문에 담긴 상품만 센다.
+            카테고리가 비었거나 영문 번역이 없는 상품은 영문명이 NULL 로 묶인다. 질문이 빼라고 하면 product_category_name_english IS NOT NULL 조건을 붙인다
+          examples: [상품이 가장 많이 등록된 카테고리 상위 5개의 영문명과 상품 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 상품 1개(products.product_id)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 기본으로 빼지 않는다. 카테고리·번역이 없는 상품 제외는 질문 조건으로 붙인다(bird-005)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 카테고리 영문명별(bird-005)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 3029
+                tolerance: 1.0e-06
+                where:
+                - product_category_name_translation.product_category_name_english = 'bed_bath_table'
+                source: 평가셋 v0.3 bird-005 정답(bed_bath_table 상품 수)
+
+  - name: sellers
+    source: sellers
+    primary_key: [seller_id]
+    description: 판매자 1명이 1행
+    fields:
+      - name: seller_id
+        expression: {sql: seller_id}
+        datatype: String
+      - name: seller_zip_code_prefix
+        expression: {sql: seller_zip_code_prefix}
+        datatype: Integer
+        description: 판매자 우편번호 앞 5자리. 공식 스키마에서 geolocation 과 잇는 값이지만 이 DB 에는 geolocation 이 없다
+      - name: seller_city
+        expression: {sql: seller_city}
+        datatype: String
+        description: 판매자가 있는 도시
+      - name: seller_state
+        expression: {sql: seller_state}
+        datatype: String
+        description: 판매자가 있는 주. 두 글자 코드(SP, RJ 등)
+    metrics:
+      - name: seller_count
+        expression:
+          sql: COUNT(seller_id)
+        description: 판매자 수. 판매자 표에 등록된 판매자를 한 명씩 센다. 판매 실적은 따지지 않는다
+        datatype: Integer
+        ai_context:
+          synonyms: [판매자 수, 셀러 수, 등록 판매자 수]
+          instructions: >-
+            판매자 주(seller_state)별로 본다.
+            판매자 한 명(seller_id)을 한 번 센다. 주문 기간·상태 조건을 붙이면 등록 판매자 전체가 아니라 그 조건의 주문에 상품이 담긴 판매자만 센다
+          examples: [판매자가 가장 많은 주 5곳과 판매자 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 판매자 1명(sellers.seller_id)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 없다. 판매 실적과 관계없이 등록된 판매자를 모두 센다(bird-002)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 판매자 주별(bird-002)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 1849
+                tolerance: 1.0e-06
+                where:
+                - sellers.seller_state = 'SP'
+                source: 평가셋 v0.3 bird-002 정답(SP 판매자 수)
+
+  - name: order_payments
+    source: order_payments
+    primary_key: [order_id, payment_sequential]
+    description: 주문의 결제 1건이 1행. 한 주문을 여러 수단으로 나눠 내면 여러 행이 있다
+    fields:
+      - name: order_id
+        expression: {sql: order_id}
+        datatype: String
+      - name: payment_sequential
+        expression: {sql: payment_sequential}
+        datatype: Integer
+        description: 주문 안에서의 결제 순번
+      - name: payment_type
+        expression: {sql: payment_type}
+        datatype: String
+        description: 결제 수단
+        ai_context:
+          instructions: 값은 credit_card(신용카드), boleto(브라질 현금 고지서 결제), voucher(바우처), debit_card(직불카드), not_defined(미정)
+      - name: payment_installments
+        expression: {sql: payment_installments}
+        datatype: Integer
+        description: 할부 개월 수
+      - name: payment_value
+        expression: {sql: payment_value}
+        datatype: Decimal
+        description: 결제 금액(배송비 포함)
+    metrics:
+      - name: payment_amount
+        expression:
+          sql: SUM(payment_value)
+        description: 결제 금액. 결제 행의 payment_value 합계이고 배송비가 들어 있다. 주문 상태와 기간은 기본으로 거르지 않는다
+        datatype: Decimal
+        ai_context:
+          synonyms: [결제 금액, 결제액, 총 결제 금액, 결제 금액 합계]
+          instructions: >-
+            결제 수단(order_payments.payment_type)별, 고객 도시(customers.customer_city, customers.customer_state 함께)별로 본다.
+            한 주문을 여러 수단으로 나눠 냈으면 결제 한 건씩 각자의 결제 수단에 더한다.
+            주문 상태와 기간은 기본으로 거르지 않는다. 질문이 정하면 orders.order_status, orders.order_purchase_timestamp(주문일) 조건을 붙인다.
+            상품·카테고리·판매자 기준으로는 묶지 않는다. 결제 행이 상품 수만큼 불어난다.
+            매출(revenue, 상품 가격 합계)과 다른 값이다
+          examples: [2017년 배송 완료 주문의 결제 수단별 결제 금액, 2018년 배송 완료 주문 기준 결제 금액이 가장 많은 고객 도시 3곳]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 결제 1행. 한 주문을 여러 수단으로 나눠 내면 결제마다 각자의 수단에 더한다
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 빼는 행
+                a: 기본으로 빼지 않는다. 주문 상태와 기간은 질문 조건으로 붙인다(bird-003 은 제한 없음)
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 보는 단위
+                a: 결제 수단별(bang-001, bird-003), 고객 도시·주별(bird-015)
+                by: 평가 담당자
+                at: '2026-11-10'
+              expected:
+                value: 6922900.24
+                tolerance: 1.0e-06
+                where:
+                - orders.order_status = 'delivered'
+                - orders.order_purchase_timestamp >= '2017-01-01'
+                - orders.order_purchase_timestamp < '2018-01-01'
+                source: 평가셋 v0.3 bang-001 정답(결제 수단별 합계의 합)
+      - name: payment_count
+        expression:
+          sql: COUNT(*)
+        description: 결제 건수. 결제 행 수이고, 한 주문을 여러 번 나눠 내면 결제마다 한 건으로 센다. 주문 상태와 기간은 기본으로 거르지 않는다
+        datatype: Integer
+        ai_context:
+          synonyms: [결제 건수, 결제 수, 결제 횟수]
+          instructions: >-
+            결제 수단(order_payments.payment_type)별로 본다.
+            결제 한 행이 한 건이다. 주문 수가 아니다(주문 하나에 결제가 여러 행일 수 있다).
+            주문 상태와 기간은 기본으로 거르지 않는다. 질문이 정하면 orders.order_status, orders.order_purchase_timestamp(주문일) 조건을 붙인다
+          examples: [신용카드로 10개월 이상 할부 결제한 건수, 2018년 주문의 결제 수단별 결제 건수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 결제 1행. 주문 수가 아니다
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 빼는 행
+                a: 기본으로 빼지 않는다. 주문 상태와 기간은 질문 조건으로 붙인다(bird-003, bird-011 은 모든 상태)
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 보는 단위
+                a: 결제 수단별(bird-011)
+                by: 평가 담당자
+                at: '2026-11-10'
+              expected:
+                value: 5669
+                tolerance: 1.0e-06
+                where:
+                - order_payments.payment_type = 'credit_card'
+                - order_payments.payment_installments >= 10
+                source: 평가셋 v0.3 bird-003 정답(결제 건수)
+      - name: avg_installments
+        expression:
+          sql: AVG(payment_installments)
+        description: 평균 할부 개월 수. 결제 행마다 할부 개월 수(payment_installments)를 평균 낸다. 주문 상태와 기간은 기본으로 거르지 않는다
+        datatype: Decimal
+        ai_context:
+          synonyms: [평균 할부 개월 수, 평균 할부, 할부 개월 평균]
+          instructions: >-
+            결제 수단(order_payments.payment_type)별로 본다.
+            결제 한 행을 한 번 센다. 주문 단위 평균이 아니다.
+            주문 상태와 기간은 기본으로 거르지 않는다. 질문이 정하면 orders.order_status, orders.order_purchase_timestamp(주문일) 조건을 붙인다
+          examples: [2018년 주문의 결제 수단별 평균 할부 개월 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 결제 1행
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 빼는 행
+                a: 기본으로 빼지 않는다. 주문 상태와 기간은 질문 조건으로 붙인다(bird-011 은 모든 상태)
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-10'
+              - q: 보는 단위
+                a: 결제 수단별(bird-011)
+                by: 평가 담당자
+                at: '2026-11-10'
+              expected:
+                value: 3.3
+                tolerance: 0.0016
+                where:
+                - order_payments.payment_type = 'credit_card'
+                - orders.order_purchase_timestamp >= '2018-01-01'
+                - orders.order_purchase_timestamp < '2019-01-01'
+                source: 평가셋 v0.3 bird-011 정답(credit_card, 소수 둘째 자리 반올림)
+
+  - name: order_reviews
+    source: order_reviews
+    primary_key: [review_id, order_id]
+    description: 주문 리뷰 1건이 1행. review_id 하나가 여러 주문에 붙은 경우가 있어 키는 (review_id, order_id)다
+    fields:
+      - name: review_id
+        expression: {sql: review_id}
+        datatype: String
+      - name: order_id
+        expression: {sql: order_id}
+        datatype: String
+      - name: review_score
+        expression: {sql: review_score}
+        datatype: Integer
+        description: 만족도 점수 1~5
+        ai_context:
+          synonyms: [평점, 리뷰 점수]
+      - name: review_comment_title
+        expression: {sql: review_comment_title}
+        datatype: String
+        description: 리뷰 제목(포르투갈어 자유 입력)
+      - name: review_comment_message
+        expression: {sql: review_comment_message}
+        datatype: String
+        description: 리뷰 본문(포르투갈어 자유 입력)
+      - name: review_creation_date
+        expression: {sql: review_creation_date}
+        datatype: DateTime
+        description: 만족도 조사를 보낸 날
+      - name: review_answer_timestamp
+        expression: {sql: review_answer_timestamp}
+        datatype: DateTime
+        description: 고객이 조사에 답한 일시
+    metrics:
+      - name: review_count
+        expression:
+          sql: COUNT(*)
+        description: 리뷰 수. 리뷰 표 한 행을 한 개로 센다. 기간과 주문 상태로 거르지 않는다
+        datatype: Integer
+        ai_context:
+          synonyms: [리뷰 수, 리뷰 개수, 리뷰 건수]
+          instructions: >-
+            리뷰 점수(review_score)별로 본다.
+            리뷰 한 행을 한 번 센다. 한 주문에 리뷰가 여러 개면 모두 센다. 리뷰가 달린 주문 수가 아니다.
+            기간을 물으면 review_creation_date(리뷰 생성일)로 자른다. 주문일·주문 상태로 거르라고 하면 orders.order_purchase_timestamp, orders.order_status 조건을 붙인다
+          examples: [리뷰 점수별 리뷰 수를 1점부터]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 리뷰 표 1행(order_reviews)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 없다(bird-004, bird-016 은 기간·상태 제한 없음)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 리뷰 생성일(order_reviews.review_creation_date)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 리뷰 점수별(bird-004, bird-016)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 57328
+                tolerance: 1.0e-06
+                where:
+                - order_reviews.review_score = 5
+                source: 평가셋 v0.3 bird-004 정답(5점 리뷰 수)
+      - name: complaint_review_rate
+        expression:
+          sql: AVG(CASE WHEN review_score IN (1, 2) THEN 100.0 WHEN review_score IN (3, 4, 5) THEN 0.0 END)
+        description: 불만 리뷰 비율(%). 1~5점 리뷰 중 1~2점 리뷰의 비율이고 0~100 단위다
+        datatype: Decimal
+        ai_context:
+          synonyms: [불만 리뷰 비율, 고객 불만 비율, 불만 비율, 저평점 리뷰 비율, 1~2점 비율]
+          instructions: >-
+            리뷰 생성일(review_creation_date__day)별로 본다.
+            불만 리뷰는 review_score 가 1 또는 2 인 리뷰다. 리뷰 글 내용은 보지 않는다.
+            분모는 점수가 1~5 인 리뷰 행 수, 분자는 그중 1~2점 리뷰 행 수다. 고객 수나 주문 수를 세지 않는다.
+            값은 0~100 단위 퍼센트다. 두 날짜의 증감은 퍼센트포인트(pp)로 빼서 낸다.
+            날짜는 review_creation_date(리뷰 생성일)로 자른다. 리뷰 응답 시각이 아니다.
+            그날 리뷰가 없으면 값은 NULL 이다. 하루 리뷰 수가 1건에서 수백 건까지라 리뷰가 적은 날은 값이 크게 흔들린다
+          examples: [2018년 7월 15일 생성 리뷰의 불만 리뷰 비율, 일별 불만 리뷰 비율]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 리뷰 표 1행. 분모는 1~5점 리뷰, 분자는 그중 1~2점 리뷰
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 불만 판정
+                a: review_score 1 또는 2. 글 감성 분석은 하지 않는다(js-002)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 리뷰 생성일(order_reviews.review_creation_date)의 달력일
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 값의 단위
+                a: 0~100 퍼센트
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 리뷰 생성일별(js-002)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 17.2414
+                tolerance: 0.0001
+                where:
+                - order_reviews.review_creation_date >= '2018-07-15'
+                - order_reviews.review_creation_date < '2018-07-16'
+                source: 평가셋 v0.3 js-002 정답 메모(2018-07-15 리뷰 87건 중 15건)
+      - name: avg_review_answer_days
+        expression:
+          sql: AVG(DATEDIFF(second, review_creation_date, review_answer_timestamp) / 86400.0)
+        description: 리뷰 답변 평균 일수. 만족도 조사를 보낸 날(review_creation_date)부터 답변 시각(review_answer_timestamp)까지 걸린 시간을 일 단위(소수 포함)로 평균 낸다
+        datatype: Decimal
+        ai_context:
+          synonyms: [리뷰 답변 평균 일수, 리뷰 답변 일수, 답변까지 걸린 일수, 리뷰 응답 소요일]
+          instructions: >-
+            리뷰 점수(review_score)별로 본다.
+            답변 일수는 review_answer_timestamp − review_creation_date 를 시·분·초까지 반영한 일 단위 실수다.
+            리뷰 한 행을 한 번 센다. 기간과 주문 상태로 거르지 않는다.
+            "판매자가 리뷰에 답하기까지"를 물어도 이 값을 쓴다. 이 데이터에는 판매자 답변 시각이 따로 없고, review_answer_timestamp 는 고객이 조사에 답한 시각이다
+          examples: [리뷰 점수별 리뷰 답변까지 평균 며칠 걸렸는지]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 리뷰 표 1행
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 없다(bird-016 은 기간·상태 제한 없음)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 일수 계산
+                a: review_answer_timestamp − review_creation_date, 일 단위 소수 포함
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 리뷰 점수별(bird-016)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 3.21
+                tolerance: 0.0016
+                where:
+                - order_reviews.review_score = 5
+                source: 평가셋 v0.3 bird-016 정답(5점, 소수 둘째 자리 반올림)
+
+  - name: product_category_name_translation
+    source: product_category_name_translation
+    primary_key: [product_category_name]
+    description: 상품 카테고리 이름 포르투갈어 → 영어 대응표
+    fields:
+      - name: product_category_name
+        expression: {sql: product_category_name}
+        datatype: String
+      - name: product_category_name_english
+        expression: {sql: product_category_name_english}
+        datatype: String
+        description: 상품 카테고리 영어 이름
+
+  - name: order_lines
+    source: >-
+      SELECT oi.order_id, oi.order_item_id, oi.shipping_limit_date, oi.price, oi.freight_value,
+      o.order_status, o.order_delivered_carrier_date, c.customer_unique_id, c.customer_state, s.seller_state
+      FROM order_items AS oi
+      LEFT JOIN orders AS o ON o.order_id = oi.order_id
+      LEFT JOIN customers AS c ON c.customer_id = o.customer_id
+      LEFT JOIN sellers AS s ON s.seller_id = oi.seller_id
+    primary_key: [order_id, order_item_id]
+    description: >-
+      지표 계산용 표. 주문 상품 1줄이 1행이고 주문·고객·판매자 값을 붙였다. 붙인 연결은 모두 N:1 이라 행 수는 order_items 와 같다.
+      order_items 의 같은 행에 이어져 있다. 묶음 기준과 조건은 원래 표 필드(order_items, orders, customers, sellers, products)를 쓴다
+    fields:
+      - name: order_id
+        expression: {sql: order_id}
+        datatype: String
+      - name: order_item_id
+        expression: {sql: order_item_id}
+        datatype: Integer
+        description: 주문 안에서의 상품 순번(1부터)
+      - name: shipping_limit_date
+        expression: {sql: shipping_limit_date}
+        datatype: DateTime
+        description: 판매자가 물류사에 넘겨야 하는 기한
+      - name: price
+        expression: {sql: price}
+        datatype: Decimal
+        description: 상품 가격. 배송비는 들어 있지 않다
+      - name: freight_value
+        expression: {sql: freight_value}
+        datatype: Decimal
+        description: 배송비
+      - name: order_status
+        expression: {sql: order_status}
+        datatype: String
+        description: 계산용 사본. 묶거나 거를 때는 orders.order_status 를 쓴다
+      - name: order_delivered_carrier_date
+        expression: {sql: order_delivered_carrier_date}
+        datatype: DateTime
+        description: 계산용 사본. 묶거나 거를 때는 orders.order_delivered_carrier_date 를 쓴다
+      - name: customer_unique_id
+        expression: {sql: customer_unique_id}
+        datatype: String
+        description: 계산용 사본. 묶거나 거를 때는 customers.customer_unique_id 를 쓴다
+      - name: customer_state
+        expression: {sql: customer_state}
+        datatype: String
+        description: 계산용 사본. 묶거나 거를 때는 customers.customer_state 를 쓴다
+      - name: seller_state
+        expression: {sql: seller_state}
+        datatype: String
+        description: 계산용 사본. 묶거나 거를 때는 sellers.seller_state 를 쓴다
+    metrics:
+      - name: revenue
+        expression:
+          sql: SUM(price) FILTER (WHERE order_status NOT IN ('canceled', 'unavailable'))
+        description: 매출. 상품 가격 합계이고 배송비는 뺀다. 취소와 재고 없음 주문도 뺀다
+        datatype: Decimal
+        ai_context:
+          synonyms: [매출, 매출액, 판매액]
+          instructions: >-
+            기간은 orders.order_purchase_timestamp(주문일) 기준으로 자른다. 일, 주, 월 단위로 볼 수 있다.
+            배송비까지 포함한 금액을 물으면 freight 지표를 함께 계산해 더하고, 그렇게 더했다고 답에 밝힌다
+          examples: [지난달 매출, 카테고리별 매출 상위 10개, 주별 매출 추이]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+      - name: freight
+        expression:
+          sql: SUM(freight_value) FILTER (WHERE order_status NOT IN ('canceled', 'unavailable'))
+        description: 배송비 합계. 취소와 재고 없음 주문은 뺀다
+        datatype: Decimal
+        ai_context:
+          synonyms: [배송비, 운송비]
+          instructions: 기간은 orders.order_purchase_timestamp(주문일) 기준으로 자른다. 매출(revenue)에는 배송비가 들어 있지 않다
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+      - name: purchasing_customers
+        expression:
+          sql: COUNT(DISTINCT customer_unique_id) FILTER (WHERE order_status NOT IN ('canceled', 'unavailable'))
+        description: 구매 고객 수. 상품을 산 실제 고객(customer_unique_id)을 한 번씩 센다. 취소와 재고 없음 주문은 뺀다
+        datatype: Integer
+        ai_context:
+          synonyms: [구매 고객 수, 고객 수, 구매자 수, 산 고객 수]
+          instructions: >-
+            평가 담당자가 지표 정의를 넣으면 평가셋 정답률이 오르는지 보려고 쓴다.
+            주문 월(orders.order_purchase_timestamp__month)별, 상품 카테고리(products.product_category_name)별로 본다.
+            고객은 customers.customer_unique_id 로 센다. customer_id 는 주문마다 새로 붙어 주문 수가 된다.
+            상품이 담긴 주문의 고객만 센다. 카테고리별로 보면 그 카테고리 상품을 산 고객이고, 여러 카테고리를 산 고객은 각 카테고리에 한 번씩 들어간다.
+            기간은 orders.order_purchase_timestamp(주문일) 기준으로 자른다
+          examples: [2018년 1~7월 월별 구매 고객 수, 2018년 1월 카테고리별 구매 고객 수]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 실제 고객(customers.customer_unique_id) 한 명
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 취소·재고 없음 주문, 상품이 없는 주문(kmk-001, kmk-003)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 주문 월별(kmk-003), 주문 월·카테고리별(kmk-001)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 7088
+                tolerance: 1.0e-06
+                where:
+                - orders.order_purchase_timestamp >= '2018-01-01'
+                - orders.order_purchase_timestamp < '2018-02-01'
+                source: 평가셋 v0.3 kmk-003 정답(2018-01 구매 고객 수)
+      - name: same_state_item_rate
+        expression:
+          sql: 100.0 * COUNT(*) FILTER (WHERE seller_state = customer_state) / COUNT(*)
+        description: 판매자·고객 같은 주 비율(%). 주문 상품 줄 중 판매자의 주와 고객의 주가 같은 줄의 비율이고 0~100 단위다. 주문 상태는 기본으로 거르지 않는다
+        datatype: Decimal
+        ai_context:
+          synonyms: [같은 주 비율, 판매자와 고객이 같은 주인 비율, 주 내 거래 비율, 같은 지역 판매 비율]
+          instructions: >-
+            전체 값으로 보거나 주문 상태·기간으로 잘라 본다.
+            주문 상품 한 줄을 한 번 센다. 같은 주는 sellers.seller_state = customers.customer_state 다.
+            값은 0~100 단위 퍼센트다.
+            주문 상태는 기본으로 거르지 않는다. 질문이 배송 완료 등을 정하면 orders.order_status 조건을 붙인다.
+            기간은 orders.order_purchase_timestamp(주문일) 기준으로 자른다
+          examples: [배송 완료 주문의 상품 중 판매자와 고객이 같은 주에 있는 비율]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 상품 1행(order_items)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 같은 주 판정
+                a: customers.customer_state = sellers.seller_state(bird-014)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 기본으로 빼지 않는다(모든 상태). item_count 와 같은 기준
+                by: 지표 요청자
+                at: '2026-11-11'
+              - q: 값의 단위
+                a: 0~100 퍼센트
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 36.177
+                tolerance: 0.0002
+                where:
+                - orders.order_status = 'delivered'
+                source: 평가셋 v0.3 bird-014 정답(110,197줄 중 39,866줄)
+      - name: shipping_limit_on_time_rate
+        expression:
+          sql: 100.0 * COUNT(*) FILTER (WHERE DATEDIFF(day, order_delivered_carrier_date, shipping_limit_date) >= 0) / COUNT(*) FILTER (WHERE order_delivered_carrier_date IS NOT NULL)
+        description: 발송 기한 준수율(%). 택배사에 넘긴 주문 상품 줄 중 인계 날짜가 발송 기한 날짜 이전(같은 날 포함)인 줄의 비율이고 0~100 단위다
+        datatype: Decimal
+        ai_context:
+          synonyms: [발송 기한 준수율, 택배사 인계 기한 준수율, 기한 준수 비율, 출고 기한 준수율]
+          instructions: >-
+            판매자 주(sellers.seller_state)별로 본다.
+            주문 상품 한 줄을 한 번 센다. 택배사 인계 시각(order_delivered_carrier_date)이 빈 줄은 분자·분모에서 뺀다.
+            준수는 날짜만 비교해 인계 날짜 ≤ 발송 기한(shipping_limit_date) 날짜다. 같은 날이면 준수다.
+            값은 0~100 단위 퍼센트다.
+            주문 상태는 기본으로 거르지 않는다. 질문이 배송 완료 등을 정하면 orders.order_status 조건을 붙인다.
+            상품 줄이 적은 주를 빼라고 하면 item_count 지표를 같은 조건으로 함께 계산해 거른다.
+            기간은 orders.order_purchase_timestamp(주문일) 기준으로 자른다
+          examples: [2018년 배송 완료 주문 기준 발송 기한 준수율이 낮은 판매자 주 5곳]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: eval_accuracy_comparison
+              discovery:
+              - q: 한 건의 단위
+                a: 주문 상품 1행(order_items)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 빼는 행
+                a: 택배사 인계 시각이 빈 줄(hard-012). 주문 상태는 기본으로 거르지 않는다(item_count 와 같은 기준)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 준수 판정
+                a: date(인계 시각) <= date(발송 기한). 같은 날이면 준수
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 값의 단위
+                a: 0~100 퍼센트
+                by: 평가 담당자
+                at: '2026-11-11'
+              - q: 보는 단위
+                a: 판매자 주별(hard-012)
+                by: 평가 담당자
+                at: '2026-11-11'
+              expected:
+                value: 92.74
+                tolerance: 0.0001
+                where:
+                - sellers.seller_state = 'PR'
+                - orders.order_status = 'delivered'
+                - orders.order_purchase_timestamp >= '2018-01-01'
+                - orders.order_purchase_timestamp < '2019-01-01'
+                source: 평가셋 v0.3 hard-012 정답(PR, 소수 둘째 자리 반올림)
+
+  - name: review_lines
+    source: >-
+      SELECT r.review_id, r.order_id, r.review_score, o.order_status
+      FROM order_reviews AS r
+      LEFT JOIN orders AS o ON o.order_id = r.order_id
+    primary_key: [review_id, order_id]
+    description: >-
+      지표 계산용 표. 리뷰 1건이 1행이고 그 주문의 상태를 붙였다. 행 수는 order_reviews 와 같다.
+      order_reviews 의 같은 행에 이어져 있다. 묶음 기준과 조건은 원래 표 필드(order_reviews, orders, customers)를 쓴다
+    fields:
+      - name: review_id
+        expression: {sql: review_id}
+        datatype: String
+      - name: order_id
+        expression: {sql: order_id}
+        datatype: String
+      - name: review_score
+        expression: {sql: review_score}
+        datatype: Integer
+        description: 만족도 점수 1~5
+      - name: order_status
+        expression: {sql: order_status}
+        datatype: String
+        description: 계산용 사본. 묶거나 거를 때는 orders.order_status 를 쓴다
+    metrics:
+      - name: avg_review_score
+        expression:
+          sql: AVG(review_score) FILTER (WHERE order_status = 'delivered')
+        description: 평균 리뷰 점수. 배송이 끝난 주문에 달린 리뷰 점수(1~5)의 평균이고, 한 주문에 리뷰가 여러 개면 리뷰마다 한 번 센다
+        datatype: Decimal
+        ai_context:
+          synonyms: [평균 리뷰 점수, 평균 평점, 리뷰 점수 평균, 만족도 평균]
+          instructions: >-
+            카테고리 담당자가 품질 개선이 필요한 곳을 고르려고 고객 주(customers.customer_state)별로 본다.
+            기간은 orders.order_purchase_timestamp(주문일) 기준으로 자른다.
+            카테고리별은 아직 계산할 수 없다. 주문 하나에 여러 카테고리 상품이 들어 있어 리뷰를 카테고리에 나눌 규칙이 먼저 필요하다.
+            고객이 적은 주는 리뷰 몇 건에 평균이 크게 흔들린다(예: RR 고객 46명)
+          examples: [고객 주별 평균 리뷰 점수, 평균 리뷰 점수가 가장 낮은 주 5개]
+        nonportable_extensions:
+          - vendor_name: TEXT2SQL
+            data:
+              status: approved
+              decision: category_quality_improvement
+              discovery:
+              - q: 한 건의 단위
+                a: 리뷰. 한 주문에 리뷰가 여러 개면 리뷰마다 한 번 센다
+                by: 지표 요청자
+                at: '2026-11-09'
+              - q: 빼는 행
+                a: 배송이 끝난(delivered) 주문의 리뷰만 넣는다
+                by: 지표 요청자
+                at: '2026-11-09'
+              - q: 기간 기준
+                a: 주문일(orders.order_purchase_timestamp)
+                by: 지표 요청자
+                at: '2026-11-09'
+              - q: 보는 단위
+                a: 고객 주별. 카테고리별은 리뷰를 카테고리에 나눌 규칙이 생긴 뒤
+                by: 지표 요청자
+                at: '2026-11-09'
+
+relationships:
+  - name: order_items_to_orders
+    from: order_items
+    to: orders
+    from_columns: [order_id]
+    to_columns: [order_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  - name: order_items_to_products
+    from: order_items
+    to: products
+    from_columns: [product_id]
+    to_columns: [product_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  - name: orders_to_customers
+    from: orders
+    to: customers
+    from_columns: [customer_id]
+    to_columns: [customer_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  # 아래 연결은 Kaggle 공식 스키마(ERD) 기준. 승인 기록: order_reviews_to_orders(2026-11-09, 평균 리뷰 점수 지표), order_items_to_sellers·order_payments_to_orders·products_to_category_translation(2026-11-11, 평가셋 v0.3 지표)
+  - name: order_items_to_sellers
+    from: order_items
+    to: sellers
+    from_columns: [seller_id]
+    to_columns: [seller_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  - name: order_payments_to_orders
+    from: order_payments
+    to: orders
+    from_columns: [order_id]
+    to_columns: [order_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  - name: order_reviews_to_orders
+    from: order_reviews
+    to: orders
+    from_columns: [order_id]
+    to_columns: [order_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  - name: products_to_category_translation
+    from: products
+    to: product_category_name_translation
+    from_columns: [product_category_name]
+    to_columns: [product_category_name]
+    ai_context:
+      instructions: 공식 ERD 그림에는 없고 번역 파일로만 있는 연결. 카테고리 2종(상품 13개)은 번역 표에 없다
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  # 계산용 표는 원래 표의 같은 행에 잇는다(기본키끼리 1:1). 주문·고객·판매자·상품은 원래 표의 승인된 연결로 닿는다(2026-11-16)
+  # 승인 기록: order_lines_to_order_items·review_lines_to_order_reviews(2026-11-16, 사용자 확인, 계산용 표로 지표 6개를 옮기며)
+  - name: order_lines_to_order_items
+    from: order_lines
+    to: order_items
+    from_columns: [order_id, order_item_id]
+    to_columns: [order_id, order_item_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved
+  - name: review_lines_to_order_reviews
+    from: review_lines
+    to: order_reviews
+    from_columns: [review_id, order_id]
+    to_columns: [review_id, order_id]
+    nonportable_extensions:
+      - vendor_name: TEXT2SQL
+        data:
+          status: approved

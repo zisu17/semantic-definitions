@@ -1,0 +1,140 @@
+# Olist(브라질 이커머스 공개 데이터) 온톨로지 ↔ 시맨틱 모델 매핑 샘플
+# 형식: Apache Ossie 0.3.0.dev0 매핑 문서, apache/ossie 커밋 da73e0e (2026-11-15) 기준
+# 검증: uv run --with <ossie 클론>/python --script <ossie 클론>/validation/validate.py --schema <ossie 클론>/ontology/mapping.json definitions/olist/sales.mapping.yaml
+#
+# sales.ontology.yaml 의 개념을 sales.ossie.yaml 의 데이터셋·필드에 연결한다.
+# 식은 데이터셋.필드 꼴로 적는다. 검증기가 식을 SQL 로 파싱해 필드가 시맨틱 모델에 있는지 확인한다.
+
+version: 0.3.0.dev0
+name: olist_sales_mapping
+description: Olist 주문·매출 온톨로지를 olist_sales 시맨틱 모델에 연결
+ontology_ref:
+  name: olist_sales_ontology
+  iri: ./sales.ontology.yaml
+semantic_model_ref:
+  name: olist_sales
+  iri: ./sales.ossie.yaml
+concept_mappings:
+- concept: State
+  object_mappings:
+  - referent_mappings:
+    - relationship: code
+      expression: customers.customer_state
+- concept: Customer
+  object_mappings:
+  - referent_mappings:
+    - relationship: unique_id
+      expression: customers.customer_unique_id
+- concept: CustomerAccount
+  object_mappings:
+  - referent_mappings:
+    - relationship: id
+      expression: customers.customer_id
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - relationship: id
+        expression: customers.customer_id
+    children:
+    - object_mapping:
+        concept: Customer
+        referent_mappings:
+        - relationship: unique_id
+          expression: customers.customer_unique_id
+      relationship: customer
+    - object_mapping:
+        concept: State
+        referent_mappings:
+        - relationship: code
+          expression: customers.customer_state
+      relationship: state
+- concept: ProductCategory
+  object_mappings:
+  - referent_mappings:
+    - relationship: name
+      expression: products.product_category_name
+- concept: Product
+  object_mappings:
+  - referent_mappings:
+    - relationship: id
+      expression: products.product_id
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - relationship: id
+        expression: products.product_id
+    children:
+    - object_mapping:
+        concept: ProductCategory
+        referent_mappings:
+        - relationship: name
+          expression: products.product_category_name
+      relationship: category
+- concept: Order
+  object_mappings:
+  - referent_mappings:
+    - relationship: id
+      expression: orders.order_id
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - relationship: id
+        expression: orders.order_id
+    children:
+    - object_mapping:    # 시맨틱 모델 relationships 의 orders_to_customers
+        concept: CustomerAccount
+        referent_mappings:
+        - relationship: id
+          expression: orders.customer_id
+      relationship: placed_by
+    - object_mapping:
+        concept: OrderStatus
+        expression: orders.order_status
+      relationship: status
+    - object_mapping:
+        concept: DateTime
+        expression: orders.order_purchase_timestamp
+      relationship: purchased_at
+    - object_mapping:
+        concept: DateTime
+        expression: orders.order_delivered_customer_date
+      relationship: delivered_at
+- concept: OrderItem
+  object_mappings:
+  - referent_mappings:
+    - relationship: order
+      referent_mappings:
+      - relationship: id
+        expression: order_items.order_id
+    - relationship: seq_nr
+      expression: order_items.order_item_id
+  link_mappings:
+  - object_mapping:
+      referent_mappings:
+      - relationship: order
+        referent_mappings:
+        - relationship: id
+          expression: order_items.order_id
+      - relationship: seq_nr
+        expression: order_items.order_item_id
+    children:
+    - object_mapping:    # 시맨틱 모델 relationships 의 order_items_to_orders
+        concept: Order
+        referent_mappings:
+        - relationship: id
+          expression: order_items.order_id
+      relationship: order
+    - object_mapping:    # 시맨틱 모델 relationships 의 order_items_to_products
+        concept: Product
+        referent_mappings:
+        - relationship: id
+          expression: order_items.product_id
+      relationship: product
+    - object_mapping:
+        concept: AmountBRL
+        expression: order_items.price
+      relationship: price
+    - object_mapping:
+        concept: AmountBRL
+        expression: order_items.freight_value
+      relationship: freight
