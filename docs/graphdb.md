@@ -1,57 +1,42 @@
 # GraphDB 계보와 배포
 
-## 그래프의 역할
+[메타데이터와 지표 계보를 위한 GraphDB 설계](https://zisu17.github.io/data/text2sql-metadata-lineage-graph-design/)의 노드·관계 계약을 따릅니다.
 
-Neo4j는 Git의 Ossie·온톨로지·매핑 정의와 실제 DB 카탈로그를 연결한 조회용 그래프입니다. 정의를 직접 수정하는 정본은 아닙니다. `Dataset`, `Field`, `Metric`, `Concept` 등의 정의 노드는 버전별로 보존하고 `Table`, `Column`은 관측한 물리 객체를 나타냅니다.
+## 그래프 범위
 
-직접 테이블을 읽는 데이터셋은 해당 `Table`로 연결합니다. SQL을 소스로 쓰는 데이터셋은 `SourceQuery`를 거쳐 FROM·JOIN의 여러 `Table`로 연결합니다. SELECT 출력식에서 필드 값의 원본 컬럼을 찾고 ON·WHERE·GROUP BY 등의 컬럼은 행 집합 영향으로 따로 기록합니다. `JoinRule`은 Ossie에 선언된 시맨틱 조인 규칙입니다.
+정의 노드는 `Model`, `Dataset`, `Field`, `Metric`입니다. 모두 `Definition` 라벨을 함께 가집니다. 물리 카탈로그는 `Table`, `Column`입니다. 운영 노드는 `ActiveVersion`, `LoadRun`, `CatalogRun`을 사용합니다. 온톨로지와 매핑 파일은 이 그래프에 적재하지 않습니다.
 
-`revenue`의 대표적인 값 계보는 다음과 같습니다.
+| 관계 | 시작 → 종료 | 의미 |
+|---|---|---|
+| `HAS` | Model→Dataset, Dataset→Field, Model/Dataset→Metric, Table→Column | 소속 |
+| `DERIVED_FROM` | Dataset→Table, Field→Column, Metric→Field | 데이터 소스와 지표 계보 |
+| `JOINS` | Dataset→Dataset | Ossie에 선언된 조인 규칙 |
+| `REFERENCES` | Table→Table | DB에 선언된 외래키 |
 
-```text
-Metric(revenue) → Field(order_lines.price) → Column(order_items.price)
-Metric(revenue) → Field(order_lines.order_status) → Column(orders.order_status)
-```
+SQL 조회문을 `source`로 쓰는 데이터셋은 단일 물리 테이블을 소스로 갖지 않으므로 Dataset→Table을 만들지 않습니다. 조회문의 출력 필드는 실제 입력 Column에 연결하고 고정 JOIN 키는 해당 데이터셋의 Metric→Field 계보에 `role: join`으로 연결합니다.
 
-`orders.order_id` 같은 SQL 조인 키는 `ROW_DEPENDS_ON`으로 연결합니다. 역방향 영향 조회에서는 값 출처와 행 집합 영향 후보를 구분해야 합니다.
+현재 Olist 정의는 글 작성 당시보다 커졌습니다. 2026-11-21 기준 계획에는 Model 1, Dataset 10, Field 61, Metric 22, Table 8, Column 47로 총 149개 노드가 있습니다. 운영 노드가 처음 게시되면 ActiveVersion·LoadRun·CatalogRun이 각각 하나씩 추가됩니다. 관계는 `HAS` 140, `DERIVED_FROM` 140, `JOINS` 9로 총 289개입니다. 따라서 블로그에 기록된 과거 데이터의 118개 노드·181개 관계와 수치가 같지 않습니다.
 
-## 계획 생성과 게시
+## 게시
 
-`DATABASE_URL`로 원본 DB에 접속할 수 있어야 실제 테이블·컬럼을 확인할 수 있습니다.
+`DATABASE_URL`로 원본 DB에 접속할 수 있어야 실제 테이블·컬럼과 외래키를 확인할 수 있습니다.
 
 ```bash
 python -m pip install -e .
 export DATABASE_URL='sqlite:////절대/경로/olist.db'
-semantic-graph plan definitions/olist/sales.ossie.yaml \
-  --ontology definitions/olist/sales.ontology.yaml \
-  --mapping definitions/olist/sales.mapping.yaml \
-  --tenant olist --source-id olist
+semantic-graph plan definitions/olist/sales.ossie.yaml --tenant olist --source-id olist
 ```
 
-`diagnostics`가 비었는지 확인한 뒤 `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`를 환경변수로 설정해 같은 인수로 `publish`를 실행합니다. 미해결 물리 객체가 있으면 기본적으로 게시를 중단하고 활성 버전을 바꾸지 않습니다. SQL 파싱 오류도 실패로 처리합니다.
+`diagnostics`가 비었는지 확인한 뒤 `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`를 설정합니다.
 
 ```bash
-semantic-graph publish definitions/olist/sales.ossie.yaml \
-  --ontology definitions/olist/sales.ontology.yaml \
-  --mapping definitions/olist/sales.mapping.yaml \
-  --tenant olist --source-id olist
+semantic-graph publish definitions/olist/sales.ossie.yaml --tenant olist --source-id olist
 ```
 
-`version_id`는 세 정의 파일의 바이트 내용으로 만든 SHA-256입니다. 새 버전의 노드·관계를 한 트랜잭션에서 적재한 뒤 `ActiveVersion`을 전환합니다. 이전 정의 버전은 계보 비교와 복구를 위해 보존합니다. 같은 버전을 다시 게시해도 노드가 중복되지 않도록 적재합니다.
+`version`은 Ossie 파일의 바이트 내용 해시입니다. 새 정의를 복합 키로 적재하고 `ActiveVersion.commit`을 전환한 뒤 이전 정의 노드를 제거합니다. 이 과정은 한 트랜잭션에서 실행합니다. Table·Column은 물리 복합 키로 재사용합니다. `LoadRun`과 `CatalogRun`은 게시할 때마다 하나씩 기록합니다.
 
-현재 물리 타입은 `Column.raw_type`에 저장합니다. 처음 연결을 만든 때의 타입은 계보 관계의 `type_at_activation`에 남깁니다. 이는 승인 당시 타입과 다를 수 있으므로 활성화 시점의 기준값으로 해석해야 합니다.
+정의는 `(tenant, model, version, id)`, Table은 `(tenant, source_id, catalog, schema, name)`, Column은 `(tenant, source_id, catalog, schema, table, name)`으로 식별합니다. 게시기는 이 세 복합 유일 제약과 `ActiveVersion(tenant, model)`, `CatalogLock(tenant, source_id)` 제약을 생성합니다. 현재 게시기는 CatalogLock 노드를 만들지 않습니다.
 
-## CI 준비 상태
+## CI
 
-`.github/workflows/graphdb.yml`은 `main`의 정의·적재기 변경에 반응하지만 저장소 변수 `GRAPHDB_DEPLOY_ENABLED=true`를 설정해야 게시 작업이 실행됩니다. 현재 자동 게시를 활성화하지 않았습니다.
-
-로컬 `127.0.0.1` Neo4j에 접근하려면 `graphdb-local` 레이블이 있는 사설 GitHub Actions 러너가 필요합니다. 그 러너에서 원본 DB에도 접속할 수 있어야 합니다.
-
-| GitHub Secret | 값 |
-|---|---|
-| `GRAPH_DATABASE_URL` | 원본 DB의 SQLAlchemy 접속 URL |
-| `NEO4J_URI` | 러너에서 접근 가능한 Bolt URI |
-| `NEO4J_USER` | Neo4j 사용자 |
-| `NEO4J_PASSWORD` | Neo4j 비밀번호 |
-
-기본 스키마·카탈로그가 `main`이 아니면 저장소 변수 `GRAPH_SCHEMA`, `GRAPH_CATALOG`도 지정합니다. 비밀번호와 DB 데이터는 Git에 올리지 않습니다.
+`.github/workflows/graphdb.yml`은 `main`의 정의·적재기 변경에 반응하지만 저장소 변수 `GRAPHDB_DEPLOY_ENABLED=true`를 설정해야 게시 작업이 실행됩니다. `graphdb-local` 레이블이 있는 사설 러너에서 원본 DB와 Neo4j에 접근할 수 있어야 합니다. `GRAPH_DATABASE_URL`, `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`를 GitHub Secrets에 지정하고 필요하면 `GRAPH_SCHEMA`, `GRAPH_CATALOG`도 설정합니다.

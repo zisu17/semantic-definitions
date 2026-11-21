@@ -17,8 +17,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["plan", "publish"])
     parser.add_argument("definition", type=Path)
-    parser.add_argument("--ontology", type=Path)
-    parser.add_argument("--mapping", type=Path)
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--source-id", required=True)
     parser.add_argument("--catalog", default=os.getenv("GRAPH_CATALOG", "main"))
@@ -35,7 +33,7 @@ def main() -> None:
     engine = create_engine(args.database_url)
     try:
         plan = build_plan(args.definition, tenant=args.tenant, source_id=args.source_id,
-                          inspector=inspect(engine), ontology=args.ontology, mapping=args.mapping,
+                          inspector=inspect(engine),
                           catalog=args.catalog, schema=args.schema)
     finally:
         engine.dispose()

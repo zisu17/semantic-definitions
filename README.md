@@ -1,6 +1,6 @@
 # Semantic Definitions
 
-Text-to-SQL이 사용하는 시맨틱 모델과 업무 개념을 정의하고 정의에서 물리 DB 컬럼까지의 계보를 Neo4j에서 조회할 수 있도록 만드는 저장소입니다.
+Text-to-SQL이 사용하는 시맨틱 모델과 업무 개념을 정의하고 시맨틱 정의에서 물리 DB 컬럼까지의 계보를 Neo4j에서 조회할 수 있도록 만드는 저장소입니다.
 
 ## Overview
 
@@ -20,13 +20,11 @@ flowchart LR
     O --> P[Text-to-SQL 플러그인]
     P --> SQL[SQL 생성·실행]
     O --> B[semantic-graph plan → publish]
-    N --> B
-    M --> B
     DB[(원본 DB 카탈로그)] --> B
     B --> G[(Neo4j 계보 그래프)]
 ```
 
-그래프 적재기는 정의와 DB에서 관측한 테이블·컬럼을 대조합니다. `plan`에서 미해결 계보를 확인한 뒤 `publish`가 새 버전을 적재하고 활성 버전을 전환합니다. 현재 Text-to-SQL 실행은 Ossie 정의를 직접 사용합니다. Neo4j 조회용 MCP는 이 저장소에 포함되지 않습니다.
+그래프 적재기는 Ossie 정의와 DB에서 관측한 테이블·컬럼을 대조합니다. `plan`에서 미해결 계보를 확인한 뒤 `publish`가 새 버전을 적재하고 활성 버전을 전환합니다. 온톨로지와 매핑은 별도 정의 파일로 유지하며 현재 GraphDB 적재 범위에는 넣지 않습니다. 현재 Text-to-SQL 실행은 Ossie 정의를 직접 사용합니다. Neo4j 조회용 MCP는 이 저장소에 포함되지 않습니다.
 
 ## Core Concepts
 
@@ -78,8 +76,6 @@ t2s check "$SEMANTIC_MODEL"
 ```bash
 python -m pip install -e .
 semantic-graph plan definitions/olist/sales.ossie.yaml \
-  --ontology definitions/olist/sales.ontology.yaml \
-  --mapping definitions/olist/sales.mapping.yaml \
   --tenant olist --source-id olist
 ```
 
@@ -87,8 +83,6 @@ semantic-graph plan definitions/olist/sales.ossie.yaml \
 
 ```bash
 semantic-graph publish definitions/olist/sales.ossie.yaml \
-  --ontology definitions/olist/sales.ontology.yaml \
-  --mapping definitions/olist/sales.mapping.yaml \
   --tenant olist --source-id olist
 ```
 
@@ -98,7 +92,7 @@ semantic-graph publish definitions/olist/sales.ossie.yaml \
 
 - **Git 정본:** 지표와 조인의 정의·승인 상태는 YAML에서 관리합니다. 그래프는 다시 만들 수 있습니다.
 - **역할 분리:** 시맨틱 정의, 업무 개념, 물리 DB 카탈로그를 구분합니다.
-- **버전별 계보:** 정의 파일 세 개의 내용 해시를 버전 ID로 사용하고 이전 정의 버전을 보존합니다.
+- **버전별 계보:** Ossie 정의 파일의 내용 해시를 버전 ID로 사용합니다. 새 버전 활성화에 성공하면 이전 정의 노드를 정리합니다.
 - **검증 후 게시:** 그래프 계획을 확인한 뒤 새 버전을 적재하고 마지막에 활성 버전을 전환합니다.
 
 ## Related Projects

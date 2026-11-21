@@ -10,8 +10,10 @@
 
 ## 여러 테이블을 읽는 지표에 SQL 데이터셋 사용
 
-현재 Ossie 계산 계층의 제약에 맞춰 `order_lines`, `review_lines`처럼 SQL을 `source`에 둔 계산용 데이터셋을 사용합니다. 그래프에서는 SQL 소스가 읽는 여러 물리 테이블과 출력 필드의 원본 컬럼을 연결합니다. 시맨틱 조인 규칙과 SQL 소스 안의 고정 조인은 별도로 표현합니다.
+현재 Ossie 계산 계층의 제약에 맞춰 `order_lines`, `review_lines`처럼 SQL을 `source`에 둔 계산용 데이터셋을 사용합니다. 그래프에서는 이 데이터셋을 단일 Table에 연결하지 않고 출력 필드를 원본 Column에 연결합니다. SQL 소스 안의 고정 조인 키는 지표의 `DERIVED_FROM {role: 'join'}` 계보로 표현합니다. 시맨틱 조인 규칙은 Dataset→Dataset의 `JOINS` 관계에 둡니다.
 
 ## 온톨로지와 지표 정의를 분리
 
 온톨로지는 `Customer`와 `CustomerAccount` 같은 업무 개념을 설명하고 Mapping은 개념을 필드에 연결합니다. 매출·주문 수 등 지표의 계산식과 승인 상태는 Ossie 파일에만 둡니다.
+
+현재 GraphDB 적재 범위는 [메타데이터·지표 계보 설계](https://zisu17.github.io/data/text2sql-metadata-lineage-graph-design/)에 맞춰 Ossie 정의와 물리 카탈로그로 제한합니다. 온톨로지 노드와 개념 매핑 관계는 적재하지 않습니다.

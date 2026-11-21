@@ -36,12 +36,8 @@ jobs:
       - name: Inspect graph plan
         run: |
           semantic-graph plan definitions/olist/sales.ossie.yaml \
-            --ontology definitions/olist/sales.ontology.yaml \
-            --mapping definitions/olist/sales.mapping.yaml \
             --tenant olist --source-id olist
       - name: Publish active graph
         run: |
           semantic-graph publish definitions/olist/sales.ossie.yaml \
-            --ontology definitions/olist/sales.ontology.yaml \
-            --mapping definitions/olist/sales.mapping.yaml \
             --tenant olist --source-id olist
