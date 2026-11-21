@@ -1,0 +1,28 @@
+# Olist 평가 지표
+
+`definitions/olist/sales.ossie.yaml`에는 지표 22개가 있습니다. 그중 17개는 평가셋 v0.3의 49문항과 비교하기 위해 만들었고 결정 ID가 `eval_accuracy_comparison`입니다.
+
+## 예상값의 의미
+
+각 지표의 확장 필드 `expected`에는 평가셋 정답 한 건의 예상값과 허용 오차를 기록했습니다. `t2s check`가 어긋남을 보고할 때는 `notes`와 함께 원인을 확인합니다. 이 값은 업무 담당자가 승인한 기준값이 아닙니다.
+
+평가용 지표마다 기본 주문 상태 조건이 다릅니다.
+
+- 매출·주문 수·구매 고객 수는 취소와 재고 없음 주문을 제외합니다.
+- 결제·상품 줄 수 계열은 모든 주문 상태를 포함합니다.
+- 지연·배송 일수 계열은 배송 완료 주문을 기준으로 합니다.
+- 두 지표를 나눠 비율을 만들 때는 같은 주문 상태 조건을 양쪽에 적용합니다.
+
+문항별 지원 상태와 계산 방법은 `text2sql-agent`의 `evals/study-v0.3/`에서 관리합니다.
+
+## 지표 부분집합 실험
+
+정답률 비교를 위해 지표를 일부만 사용할 때는 정본의 승인 상태를 바꾸지 않습니다.
+
+```bash
+uv run scripts/pick_metrics.py definitions/olist/sales.ossie.yaml revenue order_count payment_amount
+```
+
+결과는 Git에서 제외된 `build/sales.picked.ossie.yaml`입니다. 모델 이름에는 `_picked`가 붙고 설명에 선택한 지표 이름이 남습니다. 실험 시 `SEMANTIC_MODEL`이 이 파일을 가리키게 합니다.
+
+정의가 활성화된 상태에서 `t2s run`은 집계 SQL을 막습니다. 지표로 표현하지 못한 집계는 `t2s sql`로 계산할 수 있지만 정의되지 않은 계산으로 구분해 평가 기록에 남깁니다.
