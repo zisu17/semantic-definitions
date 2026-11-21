@@ -1,0 +1,47 @@
+name: Publish semantic graph
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'definitions/**'
+      - 'graphdb/**'
+      - 'pyproject.toml'
+      - '.github/workflows/graphdb.yml'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    if: vars.GRAPHDB_DEPLOY_ENABLED == 'true'
+    runs-on: [self-hosted, graphdb-local]
+    env:
+      DATABASE_URL: ${{ secrets.GRAPH_DATABASE_URL }}
+      NEO4J_URI: ${{ secrets.NEO4J_URI }}
+      NEO4J_USER: ${{ secrets.NEO4J_USER }}
+      NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+      GRAPH_SCHEMA: ${{ vars.GRAPH_SCHEMA || 'main' }}
+      GRAPH_CATALOG: ${{ vars.GRAPH_CATALOG || 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install .
+      - name: Check connection settings
+        run: |
+          test -n "$DATABASE_URL"
+          test -n "$NEO4J_URI"
+          test -n "$NEO4J_USER"
+          test -n "$NEO4J_PASSWORD"
+      - name: Inspect graph plan
+        run: |
+          semantic-graph plan definitions/olist/sales.ossie.yaml \
+            --ontology definitions/olist/sales.ontology.yaml \
+            --mapping definitions/olist/sales.mapping.yaml \
+            --tenant olist --source-id olist
+      - name: Publish active graph
+        run: |
+          semantic-graph publish definitions/olist/sales.ossie.yaml \
+            --ontology definitions/olist/sales.ontology.yaml \
+            --mapping definitions/olist/sales.mapping.yaml \
+            --tenant olist --source-id olist
