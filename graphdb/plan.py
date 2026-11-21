@@ -222,13 +222,17 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
                     continue
                 alias_map[table_expr.alias_or_name] = table_ref
                 plan.edge(query_uid, "READS_FROM", table_ref[0])
+            def matching_tables(col: exp.Column) -> list[tuple[str, dict[str, tuple[str, str]]]]:
+                if col.table:
+                    return [alias_map[col.table]] if col.table in alias_map else []
+                return [table_ref for table_ref in alias_map.values() if col.name in table_ref[1]]
+
             projections = {p.alias_or_name: p for p in parsed.expressions}
             output_bindings = {}
             for output_name, projection in projections.items():
                 resolved = []
                 for col in _columns(projection):
-                    matches = ([alias_map[col.table]] if col.table in alias_map else
-                               [v for v in alias_map.values() if col.name in v[1]])
+                    matches = matching_tables(col)
                     if len(matches) != 1 or col.name not in matches[0][1]:
                         plan.diagnostics.append(f"source {name}: unresolved projection {output_name}.{col.sql()}")
                         continue
@@ -252,8 +256,7 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
                 if clause is None:
                     continue
                 for col in _columns(clause):
-                    matches = ([alias_map[col.table]] if col.table in alias_map else
-                               [v for v in alias_map.values() if col.name in v[1]])
+                    matches = matching_tables(col)
                     if len(matches) != 1 or col.name not in matches[0][1]:
                         plan.diagnostics.append(f"source {name}: unresolved {role} column {col.sql()}")
                         continue
@@ -261,8 +264,13 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
                     plan.edge(query_uid, "ROW_DEPENDS_ON", column_uid, roles=[role],
                               type_at_activation=raw_type)
         else:
+            source_parts = source.split(".")
+            if len(source_parts) > 2 or any(not part for part in source_parts):
+                plan.diagnostics.append(f"source {name}: invalid table reference {source}")
+                continue
+            table_schema, table_name = (source_parts if len(source_parts) == 2 else (schema, source))
             try:
-                table_ref = physical(source)
+                table_ref = physical(table_name, table_schema)
             except ValueError as error:
                 plan.diagnostics.append(f"source {name}: {error}")
                 continue
@@ -281,7 +289,19 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
     for join in data.get("relationships") or []:
         name = join["name"]
         uid = def_uid(f"join:{name}")
+        source_dataset = next((d for d in datasets if d["name"] == join["from"]), None)
         target = next((d for d in datasets if d["name"] == join["to"]), None)
+        from_columns = join["from_columns"]
+        to_columns = join["to_columns"]
+        if not from_columns or len(from_columns) != len(to_columns):
+            plan.diagnostics.append(f"join {name}: key columns must be nonempty and have equal lengths")
+        for side, dataset, columns in (("from", source_dataset, from_columns), ("to", target, to_columns)):
+            if dataset is None:
+                continue
+            field_names = {item["name"] for item in dataset.get("fields") or []}
+            for column in columns:
+                if column not in field_names:
+                    plan.diagnostics.append(f"join {name}: unknown {side} field {dataset['name']}.{column}")
         target_keys = [target.get("primary_key") or []] if target else []
         target_keys += target.get("unique_keys") or [] if target else []
         declared = join.get("to_columns") in target_keys

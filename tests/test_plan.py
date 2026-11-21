@@ -83,6 +83,52 @@ def test_content_hash_changes_with_mapping(tmp_path):
     assert original.version_id != changed.version_id
 
 
+def test_qualified_table_source_resolves_schema_and_table(tmp_path):
+    data = yaml.safe_load(DEFINITION.read_text())
+    data["datasets"][0]["source"] = "main.orders"
+    definition = tmp_path / "qualified.ossie.yaml"
+    definition.write_text(yaml.safe_dump(data, allow_unicode=True))
+    engine, inspector = _inspector()
+    try:
+        plan = build_plan(definition, tenant="olist", source_id="olist", inspector=inspector)
+    finally:
+        engine.dispose()
+    assert not plan.diagnostics, plan.diagnostics
+    orders_uid = next(uid for uid, node in plan.nodes.items()
+                      if node["label"] == "Dataset" and node["ref"] == "orders")
+    assert any(source == orders_uid and relation == "READS_FROM" and
+               plan.nodes[target]["schema"] == "main" and plan.nodes[target]["name"] == "orders"
+               for source, relation, target in plan.edges)
+
+
+def test_unknown_sql_alias_is_not_resolved_by_column_name(tmp_path):
+    data = yaml.safe_load(DEFINITION.read_text())
+    order_lines = next(ds for ds in data["datasets"] if ds["name"] == "order_lines")
+    order_lines["source"] = order_lines["source"].replace("oi.price", "missing.price")
+    definition = tmp_path / "bad_alias.ossie.yaml"
+    definition.write_text(yaml.safe_dump(data, allow_unicode=True))
+    engine, inspector = _inspector()
+    try:
+        plan = build_plan(definition, tenant="olist", source_id="olist", inspector=inspector)
+    finally:
+        engine.dispose()
+    assert any("unresolved projection price.missing.price" in item for item in plan.diagnostics)
+
+
+def test_join_keys_must_name_fields_on_both_sides(tmp_path):
+    data = yaml.safe_load(DEFINITION.read_text())
+    data["relationships"][0]["from_columns"] = ["missing_order_id"]
+    definition = tmp_path / "bad_join.ossie.yaml"
+    definition.write_text(yaml.safe_dump(data, allow_unicode=True))
+    engine, inspector = _inspector()
+    try:
+        plan = build_plan(definition, tenant="olist", source_id="olist", inspector=inspector)
+    finally:
+        engine.dispose()
+    assert any("unknown from field order_items.missing_order_id" in item
+               for item in plan.diagnostics)
+
+
 def test_publish_rejects_unresolved_plan_before_connecting():
     engine, inspector = _inspector()
     try:
