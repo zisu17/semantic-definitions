@@ -24,6 +24,14 @@
 
 승인된 지표와 조인만 실행에 사용합니다. 새 지표는 `text2sql-plugin`의 `define-metric`으로 초안을 만들고 실제 값으로 검사한 뒤 승인합니다. 확장 필드의 날짜는 문자열로 쓰고 날짜 차이는 `DATEDIFF(day, 시작, 끝)` 형식을 사용합니다. 이전 `custom_extensions`와 JSON 문자열 `data`는 Ossie 0.3 검증 형식이 아닙니다.
 
+## Olist 필드 설명과 근거
+
+필드의 뜻과 NULL·번역 누락처럼 조회에 영향을 주는 예외는 `description`에 씁니다. 저장된 코드와 조건에 꼭 필요한 대응도 설명에 적습니다. 예를 들어 배송 완료는 `orders.order_status = 'delivered'`로 판정합니다. 필드 사용 지침은 `ai_context.instructions`에 적습니다. 코드가 발생하는 업무 조건이나 상태 전환 순서는 별도 근거가 필요합니다. `datatype`은 논리 타입입니다.
+
+Graph 적재기는 설명·지침·동의어를 저장합니다. MCP의 실행용 스냅샷이 필드에 전달하는 텍스트는 설명과 지침이며 Graph 검색은 저장된 동의어도 사용합니다. 필드의 `nonportable_extensions`에 근거를 넣는 방식을 사용하려면 적재와 조회 경로에서 그 항목을 전달하는 규약이 필요합니다.
+
+공통 v0.3 평가에 쓰인 Olist SQLite 사본에서 판매자 우편번호 1,027행과 고객 우편번호 23,995행이 4자리 정수였습니다. `delivered` 주문 중 수령일시가 없는 행은 8개였고 다른 상태에 수령일시가 있는 행은 6개였습니다. `pc_gamer`와 `portateis_cozinha_e_preparadores_de_alimentos`는 영문 번역표에 대응 행이 없었습니다. 이 수치는 해당 사본에서 확인한 근거이며 필드 설명에는 쿼리에 필요한 예외를 기록했습니다.
+
 ## 정의 검증
 
 ```bash

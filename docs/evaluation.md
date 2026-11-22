@@ -1,6 +1,6 @@
 # Olist 평가 지표
 
-`definitions/olist/sales.ossie.yaml`에는 지표 22개가 있습니다. 그중 17개는 평가셋 v0.3의 49문항과 비교하기 위해 만들었고 결정 ID가 `eval_accuracy_comparison`입니다.
+`definitions/olist/sales.ossie.yaml`에는 지표 28개가 있습니다. 값 검증에 사용하는 17개 기준은 평가셋 v0.3에서 가져왔습니다.
 
 ## 예상값의 의미
 
@@ -8,12 +8,14 @@
 
 평가용 지표마다 기본 주문 상태 조건이 다릅니다.
 
-- 매출·주문 수·구매 고객 수는 취소와 재고 없음 주문을 제외합니다.
-- 결제·상품 줄 수 계열은 모든 주문 상태를 포함합니다.
+- `order_count`, `revenue`, `freight`, `purchasing_customers`는 `canceled`와 `unavailable`을 제외합니다.
+- `all_order_count`, `customer_count`, `item_price_total`, `item_freight_total`, `average_review_score`는 모든 주문 상태를 기본으로 포함합니다. 상품·카테고리별 주문 수는 해당 그룹 안에서 서로 다른 주문 ID를 셉니다.
+- `failed_order_count`와 `failed_order_rate`에서 실패는 `canceled` 또는 `unavailable`입니다. 실패율의 분모는 조회 범위의 고유 주문이며 첫 결제 수단별 집계라면 각 주문의 첫 결제 행을 먼저 고릅니다.
+- 결제 건수와 상품 줄 수는 각각의 원본 행을 세며 모든 주문 상태를 기본으로 포함합니다.
 - 지연·배송 일수 계열은 배송 완료 주문을 기준으로 합니다.
 - 두 지표를 나눠 비율을 만들 때는 같은 주문 상태 조건을 양쪽에 적용합니다.
 
-문항별 지원 상태와 계산 방법은 `text2sql-agent`의 `evals/study-v0.3/`에서 관리합니다.
+집계 단위와 컬럼 설명은 스터디의 [공통 지표 사전](https://github.com/zisu17/text-to-sql-study/blob/main/experiments/inputs/B3/metrics.md)과 [수정 데이터 사전](https://github.com/zisu17/text-to-sql-study/blob/main/experiments/inputs/B1-corrected/column-descriptions.md)을 참고합니다. 날짜 범위, 출력 열, 순위 기준과 같은 문항 조건은 [공통 평가셋 v0.3](https://github.com/zisu17/text-to-sql-study/blob/main/evals/combined/model_inputs.v0.3.json)에 있습니다.
 
 ## 지표 부분집합 실험
 

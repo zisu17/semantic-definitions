@@ -36,11 +36,11 @@ def test_current_olist_follows_published_graph_design():
     plan = _plan()
     assert not plan.diagnostics, plan.diagnostics
     assert plan.summary()["nodes"] == {
-        "Model": 1, "Dataset": 10, "Field": 61, "Metric": 22,
+        "Model": 1, "Dataset": 10, "Field": 61, "Metric": 28,
         "Table": 8, "Column": 47,
     }
     assert plan.summary()["relationships"] == {
-        "HAS": 140, "DERIVED_FROM": 140, "JOINS": 9,
+        "HAS": 146, "DERIVED_FROM": 148, "JOINS": 9,
     }
     assert all(node.get("version") == plan.version_id
                for node in plan.nodes.values() if node["label"] in {"Model", "Dataset", "Field", "Metric"})
@@ -59,6 +59,16 @@ def test_current_olist_follows_published_graph_design():
                plan.nodes[target].get("table") == "order_items" and
                plan.nodes[target]["name"] == "price"
                for source, kind, target, _ in plan.edges)
+
+
+def test_order_failure_rate_has_order_and_status_lineage():
+    plan = _plan()
+    metric = next(uid for uid, node in plan.nodes.items()
+                  if node["label"] == "Metric" and node["ref"] == "failed_order_rate")
+    fields = {plan.nodes[target]["ref"]: props["role"]
+              for (source, kind, target, _), props in plan.edges.items()
+              if source == metric and kind == "DERIVED_FROM"}
+    assert fields == {"orders.order_id": "measure", "orders.order_status": "condition"}
 
 
 def test_version_depends_on_ossie_definition_only(tmp_path):
