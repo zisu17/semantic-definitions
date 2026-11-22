@@ -23,6 +23,6 @@
 uv run scripts/pick_metrics.py definitions/olist/sales.ossie.yaml revenue order_count payment_amount
 ```
 
-결과는 Git에서 제외된 `build/sales.picked.ossie.yaml`입니다. 모델 이름에는 `_picked`가 붙고 설명에 선택한 지표 이름이 남습니다. 실험 시 `SEMANTIC_MODEL`이 이 파일을 가리키게 합니다.
+결과는 Git에서 제외된 `build/sales.picked.ossie.yaml`입니다. 모델 이름에는 `_picked`가 붙고 설명에 선택한 지표 이름이 남습니다. 이 파일은 오프라인 정의 검사와 평가 실험용입니다. 일반 조회는 Graph MCP의 활성 모델만 사용하므로 부분집합으로 조회하려면 별도 테스트 모델로 게시해야 합니다. 운영 활성 모델을 실험용 부분집합으로 바꾸지 않습니다.
 
 정의가 활성화된 상태에서 `t2s run`은 집계 SQL을 막습니다. 지표로 표현하지 못한 집계는 `t2s sql`로 계산할 수 있지만 정의되지 않은 계산으로 구분해 평가 기록에 남깁니다.

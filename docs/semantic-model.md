@@ -6,7 +6,7 @@
 
 `sales.ontology.yaml`은 업무 개념과 관계를 정의합니다. `sales.mapping.yaml`은 개념과 시맨틱 필드를 연결합니다. 지표 계산식은 온톨로지에 다시 정의하지 않습니다. Olist에서 `Customer`는 실제 사람(`customer_unique_id`)이고 `CustomerAccount`는 주문별 고객 ID(`customer_id`)입니다.
 
-`definitions/olist/`가 현재 예제입니다. `text2sql-plugin`과 `text2sql-agent`에 있는 Olist 정의 파일은 시험용 사본일 수 있으므로 변경할 때 정본과 동기화 상태를 확인해야 합니다.
+`definitions/olist/`가 현재 예제입니다. 플러그인의 일반 조회 경로는 이 파일을 직접 읽지 않고 Graph MCP의 활성 모델을 사용합니다. 파일을 수정했다면 [GraphDB 게시 절차](graphdb.md)를 거쳐야 조회에 반영됩니다.
 
 ## Ossie 버전과 확장 필드
 
