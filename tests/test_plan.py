@@ -36,11 +36,11 @@ def test_current_olist_follows_published_graph_design():
     plan = _plan()
     assert not plan.diagnostics, plan.diagnostics
     assert plan.summary()["nodes"] == {
-        "Model": 1, "Dataset": 10, "Field": 61, "Metric": 28,
+        "Model": 1, "Dataset": 10, "Field": 63, "Metric": 28,
         "Table": 8, "Column": 47,
     }
     assert plan.summary()["relationships"] == {
-        "HAS": 146, "DERIVED_FROM": 148, "JOINS": 9,
+        "HAS": 148, "DERIVED_FROM": 150, "JOINS": 9,
     }
     assert all(node.get("version") == plan.version_id
                for node in plan.nodes.values() if node["label"] in {"Model", "Dataset", "Field", "Metric"})

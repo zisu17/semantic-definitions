@@ -28,7 +28,7 @@ ai_context:
 nonportable_extensions:
   - vendor_name: TEXT2SQL
     data:
-      revision: 11
+      revision: 12
       decisions:
       - id: category_quality_improvement
         decider: 카테고리 담당자
@@ -1103,7 +1103,7 @@ datasets:
 
   - name: order_lines
     source: >-
-      SELECT oi.order_id, oi.order_item_id, oi.shipping_limit_date, oi.price, oi.freight_value,
+      SELECT oi.order_id, oi.order_item_id, oi.product_id, oi.seller_id, oi.shipping_limit_date, oi.price, oi.freight_value,
       o.order_status, o.order_delivered_carrier_date, c.customer_unique_id, c.customer_state, s.seller_state
       FROM order_items AS oi
       LEFT JOIN orders AS o ON o.order_id = oi.order_id
@@ -1121,6 +1121,14 @@ datasets:
         expression: {sql: order_item_id}
         datatype: Integer
         description: 주문 안에서의 상품 순번(1부터)
+      - name: product_id
+        expression: {sql: product_id}
+        datatype: String
+        description: 상품 키. order_items.product_id 와 같고 products 와 잇는다
+      - name: seller_id
+        expression: {sql: seller_id}
+        datatype: String
+        description: 판매자 키. order_items.seller_id 와 같고 sellers 와 잇는다
       - name: shipping_limit_date
         expression: {sql: shipping_limit_date}
         datatype: DateTime
