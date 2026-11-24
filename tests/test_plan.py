@@ -79,9 +79,10 @@ def test_version_depends_on_ossie_definition_only(tmp_path):
     assert original.version_id != changed.version_id
 
 
-def test_qualified_table_source_resolves_schema_and_table(tmp_path):
+@pytest.mark.parametrize("source", [" orders ", "main.orders", "main.main.orders"])
+def test_qualified_table_source_resolves_schema_and_table(tmp_path, source):
     data = yaml.safe_load(DEFINITION.read_text())
-    data["datasets"][0]["source"] = "main.orders"
+    data["datasets"][0]["source"] = source
     definition = tmp_path / "qualified.ossie.yaml"
     definition.write_text(yaml.safe_dump(data, allow_unicode=True))
     plan = _plan(definition)
@@ -91,6 +92,15 @@ def test_qualified_table_source_resolves_schema_and_table(tmp_path):
     assert any(source == orders_uid and kind == "DERIVED_FROM" and
                plan.nodes[target]["schema"] == "main" and plan.nodes[target]["name"] == "orders"
                for source, kind, target, _ in plan.edges)
+
+
+@pytest.mark.parametrize("source", ["other.main.orders", "SELECT order_id FROM other.main.orders"])
+def test_foreign_catalog_does_not_bind_local_table(tmp_path, source):
+    data = yaml.safe_load(DEFINITION.read_text())
+    data["datasets"][0]["source"] = source
+    path = tmp_path / "foreign.ossie.yaml"
+    path.write_text(yaml.safe_dump(data))
+    assert any("outside catalog" in message for message in _plan(path).diagnostics)
 
 
 def test_unknown_sql_alias_is_not_resolved_by_column_name(tmp_path):

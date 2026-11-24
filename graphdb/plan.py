@@ -233,10 +233,11 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
         if not is_table_source(source):
             continue
         source_parts = source.strip().split(".")
-        if len(source_parts) > 2 or any(not part for part in source_parts):
-            plan.diagnostics.append(f"source {name}: invalid table reference {source}")
+        if len(source_parts) == 3 and source_parts[0] != catalog:
+            plan.diagnostics.append(f"source {name}: table is outside catalog {catalog}: {source}")
             continue
-        table_schema, table_name = (source_parts if len(source_parts) == 2 else (schema, source))
+        table_name = source_parts[-1]
+        table_schema = source_parts[-2] if len(source_parts) >= 2 else schema
         try:
             table_uid, columns = physical(table_name, table_schema)
         except ValueError as error:
@@ -267,6 +268,9 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
             raise ValueError(f"source {name}: only a flat SELECT is supported")
         alias_map: dict[str, tuple[str, dict[str, tuple[str, str]]]] = {}
         for table_expr in parsed.find_all(exp.Table):
+            if table_expr.catalog and table_expr.catalog != catalog:
+                plan.diagnostics.append(f"source {name}: table is outside catalog {catalog}: {table_expr.sql()}")
+                continue
             try:
                 alias_map[table_expr.alias_or_name] = physical(table_expr.name, table_expr.db or schema)
             except ValueError as error:
