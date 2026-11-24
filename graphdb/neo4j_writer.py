@@ -16,6 +16,12 @@ RELATIONSHIPS = {"HAS", "DERIVED_FROM", "JOINS", "REFERENCES"}
 DEFINITION_KEY = ("tenant", "model", "version", "id")
 TABLE_KEY = ("tenant", "source_id", "catalog", "schema", "name")
 COLUMN_KEY = ("tenant", "source_id", "catalog", "schema", "table", "name")
+# BM25-scored (Lucene) search over definition text, read by the Graph MCP's graph_search_definitions.
+# The cjk analyzer splits Korean into bigrams, so "매출" matches "매출액". IF NOT EXISTS keeps an
+# existing index as is: to change fields or analyzer, drop definition_text and publish again.
+FULLTEXT_INDEX = ("CREATE FULLTEXT INDEX definition_text IF NOT EXISTS FOR (n:Definition) "
+                  "ON EACH [n.ref, n.name, n.description, n.synonyms] "
+                  "OPTIONS {indexConfig: {`fulltext.analyzer`: 'cjk'}}")
 
 
 def publish(plan: GraphPlan, *, uri: str, user: str, password: str,
@@ -39,6 +45,7 @@ def publish(plan: GraphPlan, *, uri: str, user: str, password: str,
                         "REQUIRE (n.tenant, n.model) IS UNIQUE").consume()
             session.run("CREATE CONSTRAINT catalog_lock IF NOT EXISTS FOR (n:CatalogLock) "
                         "REQUIRE (n.tenant, n.source_id) IS UNIQUE").consume()
+            session.run(FULLTEXT_INDEX).consume()  # schema command: outside the write transaction
             session.execute_write(_write, plan)
     finally:
         driver.close()

@@ -4,12 +4,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+import json
+import re
 from pathlib import Path
 from typing import Any
 
 import sqlglot
 from sqlglot import exp
 import yaml
+
+
+# Same rule as the text2sql plugin's engine.SOURCE_NAME: a dataset source that is a bare
+# [catalog.][schema.]table name is a table; anything else is a SQL query. Keep the two in sync.
+SOURCE_NAME = re.compile(r"[A-Za-z_][\w$]*(\.[A-Za-z_][\w$]*){0,2}")
+
+
+def is_table_source(source: str) -> bool:
+    return bool(SOURCE_NAME.fullmatch(source.strip()))
+
+
+ROLE_ORDER = ["measure", "condition", "join"]  # also the priority of the representative `role`
 
 
 @dataclass
@@ -29,13 +43,16 @@ class GraphPlan:
         if source not in self.nodes or target not in self.nodes:
             raise ValueError(f"Edge endpoint missing: {source} -{kind}-> {target}")
         key = (source, kind, target, properties.get("name", "") if kind in {"JOINS", "REFERENCES"} else "")
+        if "role" in properties:
+            properties["roles"] = [properties["role"]]
         if key in self.edges:
             old = self.edges[key]
             for name, value in properties.items():
                 if name == "role":
-                    priority = {"measure": 3, "condition": 2, "join": 1}
-                    if priority[value] > priority[old.get(name, "join")]:
-                        old[name] = value
+                    # `roles` keeps every role a field plays in a metric; `role` stays the
+                    # highest-priority one for readers of the previous graph schema.
+                    old["roles"] = sorted(set(old.get("roles", [])) | {value}, key=ROLE_ORDER.index)
+                    old[name] = old["roles"][0]
                 elif name not in old:
                     old[name] = value
         else:
@@ -70,9 +87,16 @@ def _bundle(paths: list[Path]) -> str:
 
 
 def _extension(item: dict[str, Any]) -> dict[str, Any]:
-    for entry in item.get("nonportable_extensions", []):
-        if entry.get("vendor_name") == "TEXT2SQL":
-            return entry.get("data") or {}
+    """TEXT2SQL vendor data, read the same way as the text2sql plugin's ``ossie.ext``.
+
+    Ossie 0.3.0.dev0 writes ``nonportable_extensions`` with object data; 0.2.0.dev0 wrote
+    ``custom_extensions`` with a JSON string.
+    """
+    for key in ("nonportable_extensions", "custom_extensions"):
+        for entry in item.get(key) or []:
+            if entry.get("vendor_name") == "TEXT2SQL":
+                data = entry.get("data") or {}
+                return json.loads(data) if isinstance(data, str) else dict(data)
     return {}
 
 
@@ -206,9 +230,9 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
 
     for ds in datasets:
         name, source = ds["name"], ds["source"]
-        if source.lstrip().upper().startswith("SELECT"):
+        if not is_table_source(source):
             continue
-        source_parts = source.split(".")
+        source_parts = source.strip().split(".")
         if len(source_parts) > 2 or any(not part for part in source_parts):
             plan.diagnostics.append(f"source {name}: invalid table reference {source}")
             continue
@@ -236,7 +260,7 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
 
     for ds in datasets:
         name, source = ds["name"], ds["source"]
-        if not source.lstrip().upper().startswith("SELECT"):
+        if is_table_source(source):
             continue
         parsed = _parse(source, f"source {name}")
         if not isinstance(parsed, exp.Select) or any(isinstance(x, (exp.Subquery, exp.With)) for x in parsed.walk()):
@@ -339,9 +363,11 @@ def build_plan(definition: Path, *, tenant: str, source_id: str, inspector: Any,
         target_keys = [target_ds.get("primary_key") or []] + (target_ds.get("unique_keys") or [])
         extension = _extension(join)
         context = join.get("ai_context") or {}
+        # Same rule as the text2sql plugin: the target columns equal a key as a set (column order is free).
+        n_to_1 = any(key and set(key) == set(to_columns) for key in target_keys)
         plan.edge(ds_uids[join["from"]], "JOINS", ds_uids[join["to"]], name=name,
                   from_columns=from_columns, to_columns=to_columns,
-                  status=extension.get("status", "draft"), n_to_1=to_columns in target_keys,
+                  status=extension.get("status", "draft"), n_to_1=n_to_1,
                   synonyms=context.get("synonyms") or [], instructions=context.get("instructions") or "")
 
     for (table_schema, table_name), (table_uid, _) in list(physical_cache.items()):
