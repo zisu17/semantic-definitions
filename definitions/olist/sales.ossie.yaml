@@ -6,13 +6,13 @@
 #   폴더 = DB(접속) 하나. 파일 = 그 DB 안의 주제 영역 하나 = Ossie 시맨틱 모델 하나
 #   Ossie 는 파일끼리 참조가 안 되므로, 조인하거나 함께 계산하는 테이블은 같은 파일에 둔다
 #
-# 지표 SQL은 엔진(text2sql/engine.py)이 이 파일의 식과 연결로 만든다. LLM은 설명·동의어를 보고 지표를 고른다.
+# LLM 은 Graph 검색(설명·동의어)으로 지표를 고르고 SQL 을 직접 쓴다. 지표는 SQL 안에 AGG(별칭.지표) 로 넣으면 t2s 가 이 파일의 식대로 펼친다.
 # 지표는 모두 데이터셋 지표다. 표 여러 개가 필요한 지표는 source 에 조회문을 둔 계산용 표(order_lines, review_lines)에 둔다.
 #   Ossie 규격은 source 에 테이블·뷰 이름이나 쿼리를 둘 수 있다. t2s 는 SELECT 문 하나이고 이 파일의 다른 데이터셋이 가리키는 테이블만 읽는 조회문을 받는다
 # Ossie에 전용 칸이 없는 것은 이렇게 적는다.
 #   필터 조건: 지표 식 안에 FILTER (WHERE ...) 또는 CASE
 #   시간 기준: ai_context.instructions 에 문장으로
-#   승인 여부: nonportable_extensions(vendor_name: TEXT2SQL)의 data.status. approved 인 지표와 연결만 쓴다
+#   승인 여부: nonportable_extensions(vendor_name: TEXT2SQL)의 data.status. approved 를 먼저 쓰고, draft 도 계산은 하되 승인 전이라고 밝힌다
 #   정의 번호: 모델의 nonportable_extensions(TEXT2SQL)의 data.revision. CI 가 매기기 전까지 정의 에이전트가 저장할 때 1 올린다
 # 확장 칸(nonportable_extensions)의 data 는 JSON 문자열이 아니라 YAML 객체로 적는다. 날짜 값은 따옴표로 감싸 문자열로 둔다(날짜 객체는 규격 오류).
 # 날짜 차이는 규격대로 DATEDIFF(day, 시작, 끝)처럼 단위를 따옴표 없이 쓴다.
@@ -28,7 +28,7 @@ ai_context:
 nonportable_extensions:
   - vendor_name: TEXT2SQL
     data:
-      revision: 10
+      revision: 11
       decisions:
       - id: category_quality_improvement
         decider: 카테고리 담당자
@@ -80,33 +80,39 @@ datasets:
           주문 상태 코드. 저장 값은 delivered(배송 완료), shipped, invoiced, processing, approved, created, canceled(취소), unavailable(판매 불가)이다.
           배송 완료 주문은 order_status = 'delivered'로 고른다.
         ai_context:
+          synonyms: [주문 상태]
           instructions: 필터에는 영어로 저장된 코드를 쓴다. 상태별 발생 조건과 전환 순서는 확인되지 않았다
       - name: order_purchase_timestamp
         expression: {sql: order_purchase_timestamp}
         datatype: DateTime
         description: 주문일시. 기간을 묻는 질문의 기본 기준 날짜
         ai_context:
-          synonyms: [주문일, 구매일]
+          synonyms: [주문일, 구매일, 주문 날짜, 구매 날짜]
       - name: order_delivered_customer_date
         expression: {sql: order_delivered_customer_date}
         datatype: DateTime
         description: 고객 수령일시. 배송 완료 주문에서도 비어 있을 수 있으며 다른 상태에도 값이 있을 수 있다
         ai_context:
-          synonyms: [배송완료일, 수령일]
+          synonyms: [배송완료일, 수령일, 고객 수령 날짜, 받은 날짜, 도착일, 배송 도착일]
           instructions: 배송 완료 여부는 order_status로 확인한다. 수령일시가 필요한 계산에서는 NULL을 별도로 확인한다
       - name: order_approved_at
         expression: {sql: order_approved_at}
         datatype: DateTime
         description: 결제 승인일시. 비어 있을 수 있다
+        ai_context:
+          synonyms: [결제 승인일, 승인일]
       - name: order_delivered_carrier_date
         expression: {sql: order_delivered_carrier_date}
         datatype: DateTime
         description: 물류사 인계일시. 비어 있을 수 있다
+        ai_context:
+          synonyms: [물류사 인계일, 택배사 인계일, 출고일]
       - name: order_estimated_delivery_date
         expression: {sql: order_estimated_delivery_date}
         datatype: DateTime
         description: 주문 때 고객에게 안내한 예상 배송일. 예상일과 실제 수령일을 비교할 때는 날짜를 기준으로 본다
         ai_context:
+          synonyms: [예상 도착일, 배송 예정일, 도착 예정일]
           instructions: 날짜 단위의 예상일이다. 저장된 00:00:00을 고객에게 안내한 예정 시각으로 해석하지 않는다
     metrics:
       - name: order_count
@@ -432,10 +438,14 @@ datasets:
         expression: {sql: shipping_limit_date}
         datatype: DateTime
         description: 판매자가 상품을 물류사에 넘겨야 하는 기한. SQLite 사본에서는 YYYY-MM-DD HH:MM:SS 형식의 텍스트다
+        ai_context:
+          synonyms: [발송 기한, 출고 기한]
       - name: price
         expression: {sql: price}
         datatype: Decimal
         description: 주문 상품 항목 한 줄의 상품 가격. 배송비와 별도로 기록한다
+        ai_context:
+          synonyms: [상품 가격, 판매가]
       - name: freight_value
         expression: {sql: freight_value}
         datatype: Decimal
@@ -524,6 +534,8 @@ datasets:
         expression: {sql: customer_unique_id}
         datatype: String
         description: 실제 고객(사람) 단위 ID. 고객 수와 재구매는 이 값으로 센다
+        ai_context:
+          synonyms: [실제 고객 ID, 고객 고유 ID]
       - name: customer_state
         expression: {sql: customer_state}
         datatype: String
@@ -534,10 +546,14 @@ datasets:
         expression: {sql: customer_city}
         datatype: String
         description: 고객 주소의 도시 이름. 같은 이름을 쓰는 도시를 구분하려면 customer_state도 함께 사용한다
+        ai_context:
+          synonyms: [고객 도시, 사는 도시, 거주 도시]
       - name: customer_zip_code_prefix
         expression: {sql: customer_zip_code_prefix}
         datatype: Integer
         description: 고객 우편번호 앞 5자리. 정수로 저장되어 앞자리 0이 보존되지 않으며 이 DB에는 지리 위치 테이블이 없다
+        ai_context:
+          synonyms: [고객 우편번호]
     metrics:
       - name: customer_count
         expression:
@@ -581,22 +597,32 @@ datasets:
         expression: {sql: product_photos_qty}
         datatype: Decimal
         description: 상품 사진 수. NULL은 사진 수가 기록되지 않은 값이다
+        ai_context:
+          synonyms: [상품 사진 수, 사진 수]
       - name: product_weight_g
         expression: {sql: product_weight_g}
         datatype: Decimal
         description: 상품 무게(g). 비어 있을 수 있다
+        ai_context:
+          synonyms: [상품 무게, 무게]
       - name: product_length_cm
         expression: {sql: product_length_cm}
         datatype: Decimal
         description: 상품 길이(cm). 비어 있을 수 있다
+        ai_context:
+          synonyms: [상품 길이]
       - name: product_height_cm
         expression: {sql: product_height_cm}
         datatype: Decimal
         description: 상품 높이(cm). 비어 있을 수 있다
+        ai_context:
+          synonyms: [상품 높이]
       - name: product_width_cm
         expression: {sql: product_width_cm}
         datatype: Decimal
         description: 상품 너비(cm). 비어 있을 수 있다
+        ai_context:
+          synonyms: [상품 너비]
     metrics:
       - name: product_count
         expression:
@@ -649,14 +675,20 @@ datasets:
         expression: {sql: seller_zip_code_prefix}
         datatype: Integer
         description: 판매자 우편번호 앞 5자리. 정수로 저장되어 앞자리 0이 보존되지 않으며 이 DB에는 지리 위치 테이블이 없다
+        ai_context:
+          synonyms: [판매자 우편번호]
       - name: seller_city
         expression: {sql: seller_city}
         datatype: String
         description: 판매자가 있는 도시
+        ai_context:
+          synonyms: [판매자 도시]
       - name: seller_state
         expression: {sql: seller_state}
         datatype: String
         description: 판매자가 있는 주. 두 글자 코드(SP, RJ 등)
+        ai_context:
+          synonyms: [판매자 지역, 판매자 주]
     metrics:
       - name: seller_count
         expression:
@@ -714,6 +746,7 @@ datasets:
         datatype: String
         description: 결제 수단
         ai_context:
+          synonyms: [결제 방법, 결제 수단, 결제 방식, 지불 방법]
           instructions: >-
             저장된 코드는 credit_card(신용카드), debit_card(직불카드), voucher(바우처), boleto, not_defined다.
             필터에는 저장된 코드를 쓴다. not_defined는 문자열 코드이며 어떤 상황에서 기록되는지는 확인되지 않았다.
@@ -721,10 +754,14 @@ datasets:
         expression: {sql: payment_installments}
         datatype: Integer
         description: 고객이 선택한 할부 횟수
+        ai_context:
+          synonyms: [할부 개월 수, 할부 횟수]
       - name: payment_value
         expression: {sql: payment_value}
         datatype: Decimal
         description: 결제 항목 1건의 결제 금액(배송비 포함). 여러 결제로 나눈 주문의 결제액은 해당 주문의 결제 행을 합한다
+        ai_context:
+          synonyms: [결제액, 결제 금액]
     metrics:
       - name: payment_amount
         expression:
@@ -881,20 +918,27 @@ datasets:
         expression: {sql: review_comment_title}
         datatype: String
         description: 리뷰 제목(포르투갈어 자유 입력). 비어 있을 수 있다
+        ai_context:
+          synonyms: [리뷰 제목]
       - name: review_comment_message
         expression: {sql: review_comment_message}
         datatype: String
         description: 리뷰 본문(포르투갈어 자유 입력). 비어 있을 수 있다
+        ai_context:
+          synonyms: [리뷰 내용, 리뷰 본문]
       - name: review_creation_date
         expression: {sql: review_creation_date}
         datatype: DateTime
         description: 고객에게 만족도 조사를 보낸 날짜. 리뷰의 생성일 기준 집계에 사용한다
         ai_context:
+          synonyms: [리뷰 생성일, 만족도 조사 발송일]
           instructions: 저장 값이 00:00:00인 행의 실제 발송 시각이 자정인지는 확인되지 않았다
       - name: review_answer_timestamp
         expression: {sql: review_answer_timestamp}
         datatype: DateTime
         description: 고객이 만족도 조사에 응답한 시각. 주문별 최종 리뷰를 고를 때 생성일이 같은 행을 비교한다
+        ai_context:
+          synonyms: [리뷰 응답 시각, 만족도 조사 응답일]
     metrics:
       - name: review_count
         expression:
